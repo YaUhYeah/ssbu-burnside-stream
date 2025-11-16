@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef } from 'react';
 import {
   Play,
   Pause,
@@ -16,6 +17,7 @@ import {
   Sun,
   FileText,
   Keyboard,
+  Volume2,
 } from 'lucide-react';
 import { useProjectStore } from '@/stores/projectStore';
 import { useUIStore } from '@/stores/uiStore';
@@ -50,6 +52,56 @@ export function Header() {
     setShowSettingsDialog,
     setShowShortifyDialog,
   } = useUIStore();
+
+  // Visual feedback states
+  const [showPlayFeedback, setShowPlayFeedback] = useState(false);
+  const [lastAction, setLastAction] = useState<'play' | 'pause' | null>(null);
+  const [audioIndicator, setAudioIndicator] = useState(false);
+  const playButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Show visual feedback when play state changes
+  useEffect(() => {
+    if (isPlaying) {
+      setLastAction('play');
+      setShowPlayFeedback(true);
+      setAudioIndicator(true);
+      const timer = setTimeout(() => setShowPlayFeedback(false), 800);
+      return () => clearTimeout(timer);
+    } else {
+      setLastAction('pause');
+      setShowPlayFeedback(true);
+      setAudioIndicator(false);
+      const timer = setTimeout(() => setShowPlayFeedback(false), 800);
+      return () => clearTimeout(timer);
+    }
+  }, [isPlaying]);
+
+  // Enhanced play/pause with visual feedback
+  const handleTogglePlay = () => {
+    // Add button press animation
+    if (playButtonRef.current) {
+      playButtonRef.current.classList.add('scale-90');
+      setTimeout(() => {
+        playButtonRef.current?.classList.remove('scale-90');
+      }, 100);
+    }
+    togglePlay();
+
+    // Show toast for state change with visual indicator
+    if (!isPlaying) {
+      toast('▶️ Playing', {
+        duration: 1000,
+        icon: '🔊',
+        style: { background: '#10B981', color: 'white' }
+      });
+    } else {
+      toast('⏸️ Paused', {
+        duration: 1000,
+        icon: '🔇',
+        style: { background: '#EF4444', color: 'white' }
+      });
+    }
+  };
 
   if (!project) return null;
 
@@ -180,27 +232,57 @@ export function Header() {
 
         <button
           onClick={() => seekBackward(10)}
-          className="rounded-md p-2 hover:bg-accent"
+          className="rounded-md p-2 hover:bg-accent transition-transform active:scale-95"
           title="Skip back 10s"
         >
           <SkipBack className="h-5 w-5" />
         </button>
 
-        <button
-          onClick={togglePlay}
-          className="rounded-full bg-primary p-3 text-primary-foreground hover:bg-primary/90"
-          title={isPlaying ? 'Pause (Space)' : 'Play (Space)'}
-        >
-          {isPlaying ? (
-            <Pause className="h-5 w-5" />
-          ) : (
-            <Play className="h-5 w-5" />
+        <div className="relative">
+          <button
+            ref={playButtonRef}
+            onClick={handleTogglePlay}
+            className={cn(
+              'rounded-full p-3 text-primary-foreground transition-all duration-150',
+              isPlaying
+                ? 'bg-red-500 hover:bg-red-600 animate-pulse'
+                : 'bg-primary hover:bg-primary/90'
+            )}
+            title={isPlaying ? 'Pause (Space)' : 'Play (Space)'}
+          >
+            {isPlaying ? (
+              <Pause className="h-5 w-5" />
+            ) : (
+              <Play className="h-5 w-5" />
+            )}
+          </button>
+
+          {/* Visual feedback overlay */}
+          {showPlayFeedback && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className={cn(
+                'absolute inset-0 rounded-full animate-ping opacity-50',
+                lastAction === 'play' ? 'bg-green-400' : 'bg-red-400'
+              )} />
+            </div>
           )}
-        </button>
+
+          {/* Audio state indicator */}
+          <div className={cn(
+            'absolute -top-1 -right-1 w-3 h-3 rounded-full transition-all duration-300',
+            audioIndicator
+              ? 'bg-green-500 animate-pulse shadow-lg shadow-green-500/50'
+              : 'bg-gray-400'
+          )}>
+            {audioIndicator && (
+              <div className="absolute inset-0 rounded-full bg-green-400 animate-ping" />
+            )}
+          </div>
+        </div>
 
         <button
           onClick={() => seekForward(10)}
-          className="rounded-md p-2 hover:bg-accent"
+          className="rounded-md p-2 hover:bg-accent transition-transform active:scale-95"
           title="Skip forward 10s"
         >
           <SkipForward className="h-5 w-5" />
@@ -208,8 +290,15 @@ export function Header() {
 
         <div className="mx-2 h-6 w-px bg-border" />
 
-        <div className="flex items-center gap-1 rounded-md bg-muted px-3 py-1 font-mono text-sm">
-          <span>{formatTime(currentTime)}</span>
+        {/* Time display with state indicator */}
+        <div className={cn(
+          'flex items-center gap-1 rounded-md px-3 py-1 font-mono text-sm transition-colors',
+          isPlaying ? 'bg-green-500/10 text-green-600 dark:text-green-400' : 'bg-muted'
+        )}>
+          {audioIndicator && (
+            <Volume2 className="h-4 w-4 mr-1 animate-pulse" />
+          )}
+          <span className="font-bold">{formatTime(currentTime)}</span>
           <span className="text-muted-foreground">/</span>
           <span className="text-muted-foreground">
             {formatTime(project.duration || 0)}

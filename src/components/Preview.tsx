@@ -57,18 +57,50 @@ export function Preview() {
   useEffect(() => {
     if (!project) return;
 
-    videoSourcesRef.current.forEach((source) => {
-      if (!isPlaying) {
-        // Immediately stop all audio/video when paused
-        source.video.pause();
-      }
-    });
+    // CRITICAL: Immediately stop ALL audio when not playing
+    // This must happen synchronously to prevent audio bleeding
+    const stopAllAudio = () => {
+      videoSourcesRef.current.forEach((source) => {
+        try {
+          source.video.pause();
+          // Completely reset the audio context
+          source.video.currentTime = source.video.currentTime;
+          // Mute temporarily to ensure no audio leak
+          const originalMuted = source.video.muted;
+          source.video.muted = true;
+          // Small delay before restoring mute state
+          setTimeout(() => {
+            if (!useProjectStore.getState().isPlaying) {
+              source.video.muted = originalMuted;
+            }
+          }, 50);
+        } catch (err) {
+          console.warn('Error stopping audio:', err);
+        }
+      });
+    };
 
-    // Force a render to update visual state
+    const startAudio = () => {
+      videoSourcesRef.current.forEach((source) => {
+        if (source.ready) {
+          source.video.muted = isMuted;
+        }
+      });
+    };
+
     if (!isPlaying) {
-      renderFrame();
+      stopAllAudio();
+    } else {
+      startAudio();
     }
-  }, [isPlaying, project]);
+
+    // Cleanup on unmount or state change
+    return () => {
+      if (!isPlaying) {
+        stopAllAudio();
+      }
+    };
+  }, [isPlaying, project, isMuted]);
 
   // Initialize video sources for all media
   useEffect(() => {
@@ -178,10 +210,13 @@ export function Preview() {
                 source.video.currentTime = sourceTime;
               }
 
+              // IMPORTANT: Get current playing state from store to avoid stale closures
+              const currentlyPlaying = useProjectStore.getState().isPlaying;
+
               // Ensure video is playing if we're in playback mode
-              if (isPlaying && source.video.paused) {
+              if (currentlyPlaying && source.video.paused) {
                 source.video.play().catch(() => {});
-              } else if (!isPlaying && !source.video.paused) {
+              } else if (!currentlyPlaying && !source.video.paused) {
                 source.video.pause();
               }
 
@@ -342,6 +377,28 @@ export function Preview() {
       {/* Aspect ratio indicator */}
       <div className="absolute left-4 top-4 rounded bg-black/50 px-2 py-1 text-xs text-white">
         {project.aspectRatio}
+      </div>
+
+      {/* Audio state indicator */}
+      <div className="absolute left-4 bottom-4 flex items-center gap-2">
+        {isPlaying && !isMuted && (
+          <div className="flex items-center gap-1 rounded bg-green-500/80 px-2 py-1 text-xs text-white animate-pulse">
+            <Volume2 className="h-3 w-3" />
+            <span>Audio Active</span>
+          </div>
+        )}
+        {isPlaying && isMuted && (
+          <div className="flex items-center gap-1 rounded bg-yellow-500/80 px-2 py-1 text-xs text-white">
+            <VolumeX className="h-3 w-3" />
+            <span>Muted</span>
+          </div>
+        )}
+        {!isPlaying && (
+          <div className="flex items-center gap-1 rounded bg-gray-500/80 px-2 py-1 text-xs text-white">
+            <VolumeX className="h-3 w-3" />
+            <span>Paused</span>
+          </div>
+        )}
       </div>
     </div>
   );

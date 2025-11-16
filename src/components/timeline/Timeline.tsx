@@ -13,14 +13,26 @@ export function Timeline({ simplified = false }: TimelineProps) {
   const timelineRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [dragClipId, setDragClipId] = useState<string | null>(null);
-  const [dragStartX, setDragStartX] = useState(0);
-  const [dragStartTime, setDragStartTime] = useState(0);
+  const [, setDragStartX] = useState(0);
+  const [, setDragStartTime] = useState(0);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; trackId: string; clipId: string } | null>(null);
   const [snapGuideTime, setSnapGuideTime] = useState<number | null>(null);
   const [isResizing, setIsResizing] = useState(false);
-  const [resizeEdge, setResizeEdge] = useState<'left' | 'right' | null>(null);
-  const [pendingDrag, setPendingDrag] = useState(false);
-  const [dragThresholdMet, setDragThresholdMet] = useState(false);
+  const [, setResizeEdge] = useState<'left' | 'right' | null>(null);
+  const [, setPendingDrag] = useState(false);
+  const [, setDragThresholdMet] = useState(false);
+
+  // Use refs for values that need to be current in event handlers
+  const dragStateRef = useRef({
+    dragClipId: null as string | null,
+    dragStartX: 0,
+    dragStartTime: 0,
+    pendingDrag: false,
+    isDragging: false,
+    isResizing: false,
+    resizeEdge: null as 'left' | 'right' | null,
+    dragThresholdMet: false,
+  });
 
   const {
     project,
@@ -109,7 +121,12 @@ export function Timeline({ simplified = false }: TimelineProps) {
     const time = pixelsToTime(x, zoom, pixelsPerSecond);
 
     setCurrentTime(Math.max(0, time));
-    deselectAllClips();
+
+    // Visual feedback for deselection if clips were selected
+    if (selectedClipIds.length > 0) {
+      deselectAllClips();
+      toast('Clips deselected', { duration: 800, icon: '✗' });
+    }
   };
 
   // Handle clip drag
@@ -121,8 +138,24 @@ export function Timeline({ simplified = false }: TimelineProps) {
   ) => {
     e.stopPropagation();
     // Select immediately on click (don't require drag)
+    const wasSelected = selectedClipIds.includes(clipId);
     selectClip(clipId, e.ctrlKey || e.metaKey);
+
+    // Visual feedback for selection
+    if (!wasSelected) {
+      toast.success('Clip selected', { duration: 1000, icon: '✓' });
+    }
+
     // Set up potential drag (only start actual drag after threshold)
+    // Update both state and ref
+    dragStateRef.current = {
+      ...dragStateRef.current,
+      dragClipId: clipId,
+      dragStartX: e.clientX,
+      dragStartTime: clipStartTime,
+      pendingDrag: true,
+      dragThresholdMet: false,
+    };
     setPendingDrag(true);
     setDragThresholdMet(false);
     setDragClipId(clipId);
@@ -130,82 +163,108 @@ export function Timeline({ simplified = false }: TimelineProps) {
     setDragStartTime(clipStartTime);
   };
 
-  const handleMouseMove = (e: MouseEvent) => {
-    if (!dragClipId || !project) return;
+  // Use a stable event handler that reads from refs
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      const state = dragStateRef.current;
+      if (!state.dragClipId || !project) return;
 
-    if (isResizing && resizeEdge) {
-      // Handle clip resizing
-      const deltaX = e.clientX - dragStartX;
-      const deltaTime = pixelsToTime(deltaX, zoom, pixelsPerSecond);
-
-      for (const track of project.tracks) {
-        const clip = track.clips.find((c) => c.id === dragClipId);
-        if (clip) {
-          if (resizeEdge === 'left') {
-            let newStartTime = dragStartTime + deltaTime;
-            newStartTime = snapToNearestPoint(newStartTime);
-            newStartTime = Math.max(0, newStartTime);
-            const maxStart = clip.startTime + clip.duration - 0.5;
-            newStartTime = Math.min(newStartTime, maxStart);
-
-            const durationDelta = clip.startTime - newStartTime;
-            updateClip(track.id, clip.id, {
-              startTime: newStartTime,
-              duration: clip.duration + durationDelta,
-              inPoint: Math.max(0, clip.inPoint - durationDelta),
-            });
-          } else {
-            let newEndTime = dragStartTime + deltaTime;
-            newEndTime = snapToNearestPoint(newEndTime);
-            const newDuration = Math.max(0.5, newEndTime - clip.startTime);
-            updateClip(track.id, clip.id, {
-              duration: newDuration,
-              outPoint: clip.inPoint + newDuration,
-            });
-          }
-          break;
-        }
-      }
-    } else if (pendingDrag || isDragging) {
-      // Check if drag threshold is met (5 pixels)
-      const deltaX = e.clientX - dragStartX;
-
-      if (!dragThresholdMet && Math.abs(deltaX) > 5) {
-        setDragThresholdMet(true);
-        setIsDragging(true);
-        setPendingDrag(false);
-      }
-
-      if (isDragging || dragThresholdMet) {
-        // Handle clip dragging
+      if (state.isResizing && state.resizeEdge) {
+        // Handle clip resizing
+        const deltaX = e.clientX - state.dragStartX;
         const deltaTime = pixelsToTime(deltaX, zoom, pixelsPerSecond);
-        let newTime = dragStartTime + deltaTime;
 
-        // Snap to nearest clip edge or grid
-        newTime = snapToNearestPoint(newTime);
-        newTime = Math.max(0, newTime);
-
-        // Find and update the clip
         for (const track of project.tracks) {
-          const clip = track.clips.find((c) => c.id === dragClipId);
+          const clip = track.clips.find((c) => c.id === state.dragClipId);
           if (clip) {
-            updateClip(track.id, clip.id, { startTime: newTime });
+            if (state.resizeEdge === 'left') {
+              let newStartTime = state.dragStartTime + deltaTime;
+              newStartTime = snapToNearestPoint(newStartTime);
+              newStartTime = Math.max(0, newStartTime);
+              const maxStart = clip.startTime + clip.duration - 0.5;
+              newStartTime = Math.min(newStartTime, maxStart);
+
+              const durationDelta = clip.startTime - newStartTime;
+              updateClip(track.id, clip.id, {
+                startTime: newStartTime,
+                duration: clip.duration + durationDelta,
+                inPoint: Math.max(0, clip.inPoint - durationDelta),
+              });
+            } else {
+              let newEndTime = state.dragStartTime + deltaTime;
+              newEndTime = snapToNearestPoint(newEndTime);
+              const newDuration = Math.max(0.5, newEndTime - clip.startTime);
+              updateClip(track.id, clip.id, {
+                duration: newDuration,
+                outPoint: clip.inPoint + newDuration,
+              });
+            }
             break;
           }
         }
-      }
-    }
-  };
+      } else if (state.pendingDrag || state.isDragging) {
+        // Check if drag threshold is met (5 pixels)
+        const deltaX = e.clientX - state.dragStartX;
 
-  const handleMouseUp = () => {
-    setIsDragging(false);
-    setIsResizing(false);
-    setResizeEdge(null);
-    setDragClipId(null);
-    setSnapGuideTime(null);
-    setPendingDrag(false);
-    setDragThresholdMet(false);
-  };
+        if (!state.dragThresholdMet && Math.abs(deltaX) > 5) {
+          dragStateRef.current.dragThresholdMet = true;
+          dragStateRef.current.isDragging = true;
+          dragStateRef.current.pendingDrag = false;
+          setDragThresholdMet(true);
+          setIsDragging(true);
+          setPendingDrag(false);
+        }
+
+        if (state.isDragging || state.dragThresholdMet) {
+          // Handle clip dragging
+          const deltaTime = pixelsToTime(deltaX, zoom, pixelsPerSecond);
+          let newTime = state.dragStartTime + deltaTime;
+
+          // Snap to nearest clip edge or grid
+          newTime = snapToNearestPoint(newTime);
+          newTime = Math.max(0, newTime);
+
+          // Find and update the clip
+          for (const track of project.tracks) {
+            const clip = track.clips.find((c) => c.id === state.dragClipId);
+            if (clip) {
+              updateClip(track.id, clip.id, { startTime: newTime });
+              break;
+            }
+          }
+        }
+      }
+    };
+
+    const handleMouseUp = () => {
+      dragStateRef.current = {
+        dragClipId: null,
+        dragStartX: 0,
+        dragStartTime: 0,
+        pendingDrag: false,
+        isDragging: false,
+        isResizing: false,
+        resizeEdge: null,
+        dragThresholdMet: false,
+      };
+      setIsDragging(false);
+      setIsResizing(false);
+      setResizeEdge(null);
+      setDragClipId(null);
+      setSnapGuideTime(null);
+      setPendingDrag(false);
+      setDragThresholdMet(false);
+    };
+
+    // Always attach these handlers - they check state internally
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [project, zoom, snapToNearestPoint, updateClip]);
 
   // Handle clip resize
   const handleResizeMouseDown = (
@@ -215,24 +274,28 @@ export function Timeline({ simplified = false }: TimelineProps) {
     clipTime: number
   ) => {
     e.stopPropagation();
+
+    // Visual feedback for resize start
+    toast('Resizing clip...', { duration: 1000, icon: '↔️' });
+
+    // Update both state and ref for consistency
+    dragStateRef.current = {
+      ...dragStateRef.current,
+      dragClipId: clipId,
+      dragStartX: e.clientX,
+      dragStartTime: clipTime,
+      isResizing: true,
+      resizeEdge: edge,
+      pendingDrag: false,
+      isDragging: false,
+    };
+
     setIsResizing(true);
     setResizeEdge(edge);
     setDragClipId(clipId);
     setDragStartX(e.clientX);
     setDragStartTime(clipTime);
   };
-
-  useEffect(() => {
-    if (isDragging || isResizing || pendingDrag) {
-      window.addEventListener('mousemove', handleMouseMove);
-      window.addEventListener('mouseup', handleMouseUp);
-    }
-
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isDragging, isResizing, pendingDrag, dragClipId, dragStartX, dragStartTime, resizeEdge, dragThresholdMet]);
 
   // Handle keyboard shortcuts for clip deletion
   useEffect(() => {
