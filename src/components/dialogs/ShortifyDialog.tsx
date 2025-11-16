@@ -6,6 +6,7 @@ import { getHighlightDetector } from '@/utils/highlightDetection';
 import { transcribeAudio } from '@/utils/speechRecognition';
 import { v4 as uuidv4 } from 'uuid';
 import toast from 'react-hot-toast';
+import type { Track, TimelineClip } from '@/types';
 
 export function ShortifyDialog() {
   const { setShowShortifyDialog, setProcessing, setProcessingProgress } = useUIStore();
@@ -174,10 +175,10 @@ export function ShortifyDialog() {
 
       // Create a new track for the short
       const shortTrackId = uuidv4();
-      const shortTrack = {
+      const shortTrack: Track = {
         id: shortTrackId,
         name: `Short (${duration}s ${style})`,
-        type: 'video' as const,
+        type: 'video',
         clips: [],
         height: 80,
         locked: false,
@@ -189,7 +190,7 @@ export function ShortifyDialog() {
       let timelinePosition = 0;
       selectedClips.forEach((clip) => {
         const clipId = uuidv4();
-        const clipData = {
+        const clipData: TimelineClip = {
           id: clipId,
           mediaId: videoMedia.id,
           trackId: shortTrackId,
