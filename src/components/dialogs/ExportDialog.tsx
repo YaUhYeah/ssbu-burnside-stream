@@ -93,6 +93,14 @@ export function ExportDialog() {
   const [selectedPreset, setSelectedPreset] = useState<string>('youtube');
   const [includeAudio, setIncludeAudio] = useState(true);
   const [includeCaptions, setIncludeCaptions] = useState(true);
+  const [qualityLevel, setQualityLevel] = useState<'draft' | 'standard' | 'high' | 'ultra'>('high');
+
+  const qualityMultiplier = {
+    draft: 0.5,
+    standard: 1,
+    high: 1.5,
+    ultra: 2,
+  };
 
   const handleExport = async () => {
     if (!project) return;
@@ -156,6 +164,34 @@ export function ExportDialog() {
             </div>
           </div>
 
+          {/* Quality Level */}
+          <div>
+            <label className="mb-2 block text-sm font-medium">
+              Quality Level
+            </label>
+            <div className="grid grid-cols-4 gap-2">
+              {(['draft', 'standard', 'high', 'ultra'] as const).map((level) => (
+                <button
+                  key={level}
+                  onClick={() => setQualityLevel(level)}
+                  className={`rounded-md border p-2 text-center transition-colors ${
+                    qualityLevel === level
+                      ? 'border-primary bg-primary/10'
+                      : 'border-border hover:border-primary/50'
+                  }`}
+                >
+                  <p className="text-sm font-medium capitalize">{level}</p>
+                  <p className="text-[10px] text-muted-foreground">
+                    {level === 'draft' && 'Fast preview'}
+                    {level === 'standard' && 'Balanced'}
+                    {level === 'high' && 'Best quality'}
+                    {level === 'ultra' && 'Maximum'}
+                  </p>
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Export settings */}
           {preset && (
             <div className="rounded-md bg-muted/50 p-4">
@@ -177,7 +213,9 @@ export function ExportDialog() {
                 </div>
                 <div>
                   <p className="text-muted-foreground">Bitrate</p>
-                  <p className="font-medium">{preset.bitrate} kbps</p>
+                  <p className="font-medium">
+                    {Math.round(preset.bitrate * qualityMultiplier[qualityLevel])} kbps
+                  </p>
                 </div>
                 <div>
                   <p className="text-muted-foreground">Audio Codec</p>
@@ -190,6 +228,12 @@ export function ExportDialog() {
               </div>
             </div>
           )}
+
+          {/* Codec compatibility note */}
+          <div className="rounded-md bg-blue-500/10 p-3 text-xs text-blue-600 dark:text-blue-400">
+            <strong>Note:</strong> MKV files with certain codecs (HEVC/H.265, VP9) may have limited browser support.
+            For best results, use MP4 files with H.264 codec. All exports use the widely compatible H.264 codec.
+          </div>
 
           {/* Options */}
           <div className="space-y-3">

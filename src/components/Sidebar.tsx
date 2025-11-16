@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { v4 as uuidv4 } from 'uuid';
 import {
@@ -16,6 +16,7 @@ import { useProjectStore } from '@/stores/projectStore';
 import { cn, formatFileSize, formatDuration, getMediaType } from '@/lib/utils';
 import type { MediaFile } from '@/types';
 import toast from 'react-hot-toast';
+import { ResolutionMatchDialog } from './dialogs/ResolutionMatchDialog';
 
 type PanelType = 'media' | 'effects' | 'captions' | 'templates' | 'export';
 
@@ -29,7 +30,11 @@ const PANEL_ICONS: Record<PanelType, typeof Film> = {
 
 export function Sidebar() {
   const { currentPanel, setCurrentPanel } = useUIStore();
-  const { addMedia } = useProjectStore();
+  const { addMedia, project, updateProject } = useProjectStore();
+
+  // Resolution matching state
+  const [pendingMedia, setPendingMedia] = useState<MediaFile | null>(null);
+  const [showResolutionDialog, setShowResolutionDialog] = useState(false);
 
   const onDrop = useCallback(
     async (acceptedFiles: File[]) => {
@@ -60,16 +65,34 @@ export function Sidebar() {
               width = video.videoWidth;
               height = video.videoHeight;
 
-              // Generate thumbnail
-              video.currentTime = 1;
+              // Generate thumbnail at higher quality
+              video.currentTime = Math.min(1, video.duration * 0.1);
               video.onseeked = () => {
                 const canvas = document.createElement('canvas');
-                canvas.width = 160;
-                canvas.height = 90;
+                canvas.width = 320;
+                canvas.height = 180;
                 const ctx = canvas.getContext('2d');
                 if (ctx) {
-                  ctx.drawImage(video, 0, 0, 160, 90);
-                  thumbnail = canvas.toDataURL('image/jpeg', 0.7);
+                  // Preserve aspect ratio for thumbnail
+                  const videoAspect = video.videoWidth / video.videoHeight;
+                  const canvasAspect = canvas.width / canvas.height;
+                  let drawW = canvas.width;
+                  let drawH = canvas.height;
+                  let drawX = 0;
+                  let drawY = 0;
+
+                  if (videoAspect > canvasAspect) {
+                    drawH = canvas.width / videoAspect;
+                    drawY = (canvas.height - drawH) / 2;
+                  } else {
+                    drawW = canvas.height * videoAspect;
+                    drawX = (canvas.width - drawW) / 2;
+                  }
+
+                  ctx.fillStyle = '#000';
+                  ctx.fillRect(0, 0, canvas.width, canvas.height);
+                  ctx.drawImage(video, drawX, drawY, drawW, drawH);
+                  thumbnail = canvas.toDataURL('image/jpeg', 0.85);
                 }
                 resolve();
               };
@@ -111,12 +134,67 @@ export function Sidebar() {
           createdAt: new Date(),
         };
 
-        addMedia(media);
-        toast.success(`Added ${file.name}`);
+        // Check for resolution mismatch on first video import
+        if (
+          project &&
+          mediaType === 'video' &&
+          width > 0 &&
+          height > 0 &&
+          (Math.abs(width - project.resolution.width) > 10 ||
+            Math.abs(height - project.resolution.height) > 10)
+        ) {
+          // Show resolution matching dialog
+          setPendingMedia(media);
+          setShowResolutionDialog(true);
+        } else {
+          addMedia(media);
+          toast.success(`Added ${file.name}`);
+        }
       }
     },
-    [addMedia]
+    [addMedia, project]
   );
+
+  const handleMatchToMedia = () => {
+    if (pendingMedia && project) {
+      // Update project resolution to match media
+      const aspectRatio =
+        pendingMedia.width > pendingMedia.height
+          ? `${Math.round((pendingMedia.width / pendingMedia.height) * 9)}:9`
+          : `9:${Math.round((pendingMedia.height / pendingMedia.width) * 9)}`;
+
+      updateProject({
+        resolution: {
+          width: pendingMedia.width,
+          height: pendingMedia.height,
+          label: `${pendingMedia.width}x${pendingMedia.height}`,
+        },
+        aspectRatio,
+      });
+
+      addMedia(pendingMedia);
+      toast.success(`Project resolution updated to ${pendingMedia.width}x${pendingMedia.height}`);
+    }
+    setPendingMedia(null);
+    setShowResolutionDialog(false);
+  };
+
+  const handleKeepProjectResolution = () => {
+    if (pendingMedia) {
+      addMedia(pendingMedia);
+      toast.success(`Added ${pendingMedia.name} (auto-scaled to project resolution)`);
+    }
+    setPendingMedia(null);
+    setShowResolutionDialog(false);
+  };
+
+  const handleCancelImport = () => {
+    if (pendingMedia) {
+      URL.revokeObjectURL(pendingMedia.path);
+    }
+    setPendingMedia(null);
+    setShowResolutionDialog(false);
+  };
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -143,32 +221,48 @@ export function Sidebar() {
   };
 
   return (
-    <div className="flex h-full flex-col">
-      {/* Panel tabs */}
-      <div className="flex border-b border-border">
-        {(Object.keys(PANEL_ICONS) as PanelType[]).map((panel) => {
-          const Icon = PANEL_ICONS[panel];
-          return (
-            <button
-              key={panel}
-              onClick={() => setCurrentPanel(panel)}
-              className={cn(
-                'flex flex-1 flex-col items-center justify-center gap-1 py-3 text-xs transition-colors',
-                currentPanel === panel
-                  ? 'bg-accent text-accent-foreground'
-                  : 'text-muted-foreground hover:bg-accent/50'
-              )}
-            >
-              <Icon className="h-4 w-4" />
-              <span className="capitalize">{panel}</span>
-            </button>
-          );
-        })}
+    <>
+      <div className="flex h-full flex-col">
+        {/* Panel tabs */}
+        <div className="flex border-b border-border">
+          {(Object.keys(PANEL_ICONS) as PanelType[]).map((panel) => {
+            const Icon = PANEL_ICONS[panel];
+            return (
+              <button
+                key={panel}
+                onClick={() => setCurrentPanel(panel)}
+                className={cn(
+                  'flex flex-1 flex-col items-center justify-center gap-1 py-3 text-xs transition-colors',
+                  currentPanel === panel
+                    ? 'bg-accent text-accent-foreground'
+                    : 'text-muted-foreground hover:bg-accent/50'
+                )}
+              >
+                <Icon className="h-4 w-4" />
+                <span className="capitalize">{panel}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Panel content */}
+        <div className="flex-1 overflow-y-auto p-4">{renderPanelContent()}</div>
       </div>
 
-      {/* Panel content */}
-      <div className="flex-1 overflow-y-auto p-4">{renderPanelContent()}</div>
-    </div>
+      {/* Resolution matching dialog */}
+      {showResolutionDialog && pendingMedia && project && (
+        <ResolutionMatchDialog
+          mediaName={pendingMedia.name}
+          mediaWidth={pendingMedia.width}
+          mediaHeight={pendingMedia.height}
+          projectWidth={project.resolution.width}
+          projectHeight={project.resolution.height}
+          onMatchToMedia={handleMatchToMedia}
+          onKeepProject={handleKeepProjectResolution}
+          onCancel={handleCancelImport}
+        />
+      )}
+    </>
   );
 }
 

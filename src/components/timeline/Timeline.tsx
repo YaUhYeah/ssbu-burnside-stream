@@ -1,5 +1,5 @@
-import { useRef, useState, useEffect } from 'react';
-import { Plus, Minus, Lock, Eye, EyeOff, Volume2, VolumeX, Trash2, X } from 'lucide-react';
+import { useRef, useState, useEffect, useMemo } from 'react';
+import { Plus, Minus, Lock, Eye, EyeOff, Volume2, VolumeX, Trash2, X, Magnet, Maximize, RotateCcw } from 'lucide-react';
 import { useProjectStore } from '@/stores/projectStore';
 import { cn, formatTime, timeToPixels, pixelsToTime, snapToGrid } from '@/lib/utils';
 import toast from 'react-hot-toast';
@@ -16,6 +16,9 @@ export function Timeline({ simplified = false }: TimelineProps) {
   const [dragStartX, setDragStartX] = useState(0);
   const [dragStartTime, setDragStartTime] = useState(0);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; trackId: string; clipId: string } | null>(null);
+  const [snapGuideTime, setSnapGuideTime] = useState<number | null>(null);
+  const [isResizing, setIsResizing] = useState(false);
+  const [resizeEdge, setResizeEdge] = useState<'left' | 'right' | null>(null);
 
   const {
     project,
@@ -33,9 +36,53 @@ export function Timeline({ simplified = false }: TimelineProps) {
     addTrack,
     removeClip,
     removeTrack,
+    updateProject,
   } = useProjectStore();
 
   const pixelsPerSecond = 50;
+
+  // Calculate snap points from all clip edges
+  const snapPoints = useMemo(() => {
+    if (!project) return [];
+    const points = new Set<number>();
+    points.add(0); // Start of timeline
+    points.add(currentTime); // Playhead
+
+    project.tracks.forEach((track) => {
+      track.clips.forEach((clip) => {
+        if (clip.id !== dragClipId) {
+          points.add(clip.startTime);
+          points.add(clip.startTime + clip.duration);
+        }
+      });
+    });
+
+    return Array.from(points).sort((a, b) => a - b);
+  }, [project, dragClipId, currentTime]);
+
+  // Snap to nearest point (magnetic snap)
+  const snapToNearestPoint = (time: number, threshold = 0.3): number => {
+    if (!project?.settings.snapToGrid) return time;
+
+    let nearestPoint = time;
+    let nearestDistance = threshold;
+
+    for (const point of snapPoints) {
+      const distance = Math.abs(time - point);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestPoint = point;
+      }
+    }
+
+    if (nearestPoint !== time) {
+      setSnapGuideTime(nearestPoint);
+    } else {
+      setSnapGuideTime(null);
+    }
+
+    return nearestPoint;
+  };
 
   // Handle scroll
   useEffect(() => {
@@ -78,36 +125,87 @@ export function Timeline({ simplified = false }: TimelineProps) {
   };
 
   const handleMouseMove = (e: MouseEvent) => {
-    if (!isDragging || !dragClipId || !project) return;
+    if (!dragClipId || !project) return;
 
-    const deltaX = e.clientX - dragStartX;
-    const deltaTime = pixelsToTime(deltaX, zoom, pixelsPerSecond);
-    let newTime = dragStartTime + deltaTime;
+    if (isResizing && resizeEdge) {
+      // Handle clip resizing
+      const deltaX = e.clientX - dragStartX;
+      const deltaTime = pixelsToTime(deltaX, zoom, pixelsPerSecond);
 
-    // Snap to grid if enabled
-    if (project.settings.snapToGrid) {
-      newTime = snapToGrid(newTime, project.settings.gridSize);
-    }
+      for (const track of project.tracks) {
+        const clip = track.clips.find((c) => c.id === dragClipId);
+        if (clip) {
+          if (resizeEdge === 'left') {
+            let newStartTime = dragStartTime + deltaTime;
+            newStartTime = snapToNearestPoint(newStartTime);
+            newStartTime = Math.max(0, newStartTime);
+            const maxStart = clip.startTime + clip.duration - 0.5;
+            newStartTime = Math.min(newStartTime, maxStart);
 
-    newTime = Math.max(0, newTime);
+            const durationDelta = clip.startTime - newStartTime;
+            updateClip(track.id, clip.id, {
+              startTime: newStartTime,
+              duration: clip.duration + durationDelta,
+              inPoint: Math.max(0, clip.inPoint - durationDelta),
+            });
+          } else {
+            let newEndTime = dragStartTime + deltaTime;
+            newEndTime = snapToNearestPoint(newEndTime);
+            const newDuration = Math.max(0.5, newEndTime - clip.startTime);
+            updateClip(track.id, clip.id, {
+              duration: newDuration,
+              outPoint: clip.inPoint + newDuration,
+            });
+          }
+          break;
+        }
+      }
+    } else if (isDragging) {
+      // Handle clip dragging
+      const deltaX = e.clientX - dragStartX;
+      const deltaTime = pixelsToTime(deltaX, zoom, pixelsPerSecond);
+      let newTime = dragStartTime + deltaTime;
 
-    // Find and update the clip
-    for (const track of project.tracks) {
-      const clip = track.clips.find((c) => c.id === dragClipId);
-      if (clip) {
-        updateClip(track.id, clip.id, { startTime: newTime });
-        break;
+      // Snap to nearest clip edge or grid
+      newTime = snapToNearestPoint(newTime);
+      newTime = Math.max(0, newTime);
+
+      // Find and update the clip
+      for (const track of project.tracks) {
+        const clip = track.clips.find((c) => c.id === dragClipId);
+        if (clip) {
+          updateClip(track.id, clip.id, { startTime: newTime });
+          break;
+        }
       }
     }
   };
 
   const handleMouseUp = () => {
     setIsDragging(false);
+    setIsResizing(false);
+    setResizeEdge(null);
     setDragClipId(null);
+    setSnapGuideTime(null);
+  };
+
+  // Handle clip resize
+  const handleResizeMouseDown = (
+    e: React.MouseEvent,
+    clipId: string,
+    edge: 'left' | 'right',
+    clipTime: number
+  ) => {
+    e.stopPropagation();
+    setIsResizing(true);
+    setResizeEdge(edge);
+    setDragClipId(clipId);
+    setDragStartX(e.clientX);
+    setDragStartTime(clipTime);
   };
 
   useEffect(() => {
-    if (isDragging) {
+    if (isDragging || isResizing) {
       window.addEventListener('mousemove', handleMouseMove);
       window.addEventListener('mouseup', handleMouseUp);
     }
@@ -116,7 +214,7 @@ export function Timeline({ simplified = false }: TimelineProps) {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isDragging, dragClipId, dragStartX, dragStartTime]);
+  }, [isDragging, isResizing, dragClipId, dragStartX, dragStartTime, resizeEdge]);
 
   // Handle keyboard shortcuts for clip deletion
   useEffect(() => {
@@ -221,21 +319,75 @@ export function Timeline({ simplified = false }: TimelineProps) {
               >
                 + Audio Track
               </button>
+              <div className="mx-2 h-6 w-px bg-border" />
+              <button
+                onClick={() =>
+                  updateProject({
+                    settings: {
+                      ...project.settings,
+                      snapToGrid: !project.settings.snapToGrid,
+                    },
+                  })
+                }
+                className={cn(
+                  'flex items-center gap-1 rounded px-2 py-1 text-xs',
+                  project.settings.snapToGrid
+                    ? 'bg-primary/20 text-primary hover:bg-primary/30'
+                    : 'hover:bg-accent'
+                )}
+                title={project.settings.snapToGrid ? 'Disable snap' : 'Enable snap'}
+              >
+                <Magnet className="h-3 w-3" />
+                Snap
+              </button>
             </>
           )}
         </div>
 
         <div className="flex items-center gap-2">
           <button
+            onClick={() => {
+              // Fit timeline to view
+              if (containerRef.current && project.duration > 0) {
+                const viewWidth = containerRef.current.clientWidth - 48; // account for headers
+                const newZoom = viewWidth / (project.duration * pixelsPerSecond);
+                setZoom(Math.max(0.1, Math.min(10, newZoom)));
+              }
+            }}
+            className="rounded p-1 hover:bg-accent"
+            title="Fit to view"
+          >
+            <Maximize className="h-4 w-4" />
+          </button>
+          <button
+            onClick={() => setZoom(1)}
+            className="rounded p-1 hover:bg-accent"
+            title="Reset zoom"
+          >
+            <RotateCcw className="h-4 w-4" />
+          </button>
+          <div className="mx-1 h-6 w-px bg-border" />
+          <button
             onClick={() => setZoom(Math.max(0.1, zoom - 0.2))}
             className="rounded p-1 hover:bg-accent"
+            title="Zoom out"
           >
             <Minus className="h-4 w-4" />
           </button>
-          <span className="text-xs">{Math.round(zoom * 100)}%</span>
+          <input
+            type="range"
+            min="10"
+            max="500"
+            value={zoom * 100}
+            onChange={(e) => setZoom(parseInt(e.target.value) / 100)}
+            className="h-1 w-24 appearance-none rounded-full bg-border"
+            title={`Zoom: ${Math.round(zoom * 100)}%`}
+          />
+          <span className="w-12 text-xs text-center">{Math.round(zoom * 100)}%</span>
           <button
             onClick={() => setZoom(Math.min(10, zoom + 0.2))}
             className="rounded p-1 hover:bg-accent"
+            title="Zoom in"
           >
             <Plus className="h-4 w-4" />
           </button>
@@ -360,13 +512,14 @@ export function Timeline({ simplified = false }: TimelineProps) {
                     <div
                       key={clip.id}
                       className={cn(
-                        'timeline-clip',
+                        'timeline-clip group/clip',
                         selectedClipIds.includes(clip.id) &&
                           'ring-2 ring-yellow-400',
                         track.type === 'audio' && 'bg-green-500/80',
-                        track.type === 'caption' && 'bg-yellow-500/80'
+                        track.type === 'caption' && 'bg-yellow-500/80',
+                        isDragging && dragClipId === clip.id && 'opacity-80'
                       )}
-                      style={{ left, width }}
+                      style={{ left, width: Math.max(width, 20) }}
                       onMouseDown={(e) =>
                         handleClipMouseDown(
                           e,
@@ -377,7 +530,7 @@ export function Timeline({ simplified = false }: TimelineProps) {
                       }
                       onContextMenu={(e) => handleClipContextMenu(e, track.id, clip.id)}
                     >
-                      <div className="flex h-full flex-col justify-between p-1">
+                      <div className="flex h-full flex-col justify-between p-1 pointer-events-none">
                         <span className="truncate text-[10px] font-medium text-white">
                           {media?.name || 'Unknown'}
                         </span>
@@ -387,13 +540,40 @@ export function Timeline({ simplified = false }: TimelineProps) {
                       </div>
 
                       {/* Resize handles */}
-                      <div className="absolute left-0 top-0 h-full w-1 cursor-w-resize bg-white/20 hover:bg-white/40" />
-                      <div className="absolute right-0 top-0 h-full w-1 cursor-e-resize bg-white/20 hover:bg-white/40" />
+                      <div
+                        className="absolute left-0 top-0 h-full w-2 cursor-w-resize bg-white/0 hover:bg-white/30 group-hover/clip:bg-white/20"
+                        onMouseDown={(e) =>
+                          handleResizeMouseDown(e, clip.id, 'left', clip.startTime)
+                        }
+                      />
+                      <div
+                        className="absolute right-0 top-0 h-full w-2 cursor-e-resize bg-white/0 hover:bg-white/30 group-hover/clip:bg-white/20"
+                        onMouseDown={(e) =>
+                          handleResizeMouseDown(
+                            e,
+                            clip.id,
+                            'right',
+                            clip.startTime + clip.duration
+                          )
+                        }
+                      />
                     </div>
                   );
                 })}
               </div>
             ))}
+
+            {/* Snap guide line */}
+            {snapGuideTime !== null && (
+              <div
+                className="absolute top-0 bottom-0 w-px bg-yellow-400 z-20 pointer-events-none"
+                style={{
+                  left: timeToPixels(snapGuideTime, zoom, pixelsPerSecond),
+                }}
+              >
+                <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-yellow-400 rounded-full" />
+              </div>
+            )}
 
             {/* Playhead */}
             <div

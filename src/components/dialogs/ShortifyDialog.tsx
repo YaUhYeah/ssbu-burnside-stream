@@ -9,7 +9,7 @@ import toast from 'react-hot-toast';
 
 export function ShortifyDialog() {
   const { setShowShortifyDialog, setProcessing, setProcessingProgress } = useUIStore();
-  const { project, addTrack, addClipToTrack, addCaption, setProject } = useProjectStore();
+  const { project, addCaption, updateProject } = useProjectStore();
 
   const [duration, setDuration] = useState<15 | 30 | 60>(30);
   const [style, setStyle] = useState<'hook' | 'highlights' | 'summary'>('highlights');
@@ -63,7 +63,7 @@ export function ShortifyDialog() {
         }
       }
 
-      const mediaBlob = new Blob(chunks);
+      const mediaBlob = new Blob(chunks as BlobPart[]);
 
       setProcessingProgress(20);
 
@@ -213,7 +213,7 @@ export function ShortifyDialog() {
           // For large files, only transcribe the selected portions
           if (mediaBlob.size > 50 * 1024 * 1024) {
             // Skip detailed transcription for very large files
-            toast.info('Captions skipped for large file - add manually');
+            toast.success('Captions skipped for large file - add manually');
           } else {
             // Create a blob from selected segments for transcription
             const captions = await transcribeAudio(mediaBlob);
@@ -260,8 +260,7 @@ export function ShortifyDialog() {
 
       // Update project resolution for vertical crop
       if (verticalCrop) {
-        setProject({
-          ...project,
+        updateProject({
           tracks: [...project.tracks, shortTrack],
           resolution: {
             width: 1080,
@@ -272,8 +271,7 @@ export function ShortifyDialog() {
           duration: Math.max(project.duration, timelinePosition),
         });
       } else {
-        setProject({
-          ...project,
+        updateProject({
           tracks: [...project.tracks, shortTrack],
           duration: Math.max(project.duration, timelinePosition),
         });

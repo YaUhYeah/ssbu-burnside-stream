@@ -67,6 +67,22 @@ export function Preview() {
         video.preload = 'auto';
         video.muted = isMuted;
         video.playsInline = true;
+        video.crossOrigin = 'anonymous';
+
+        // Optimize for quality - request high quality playback
+        video.setAttribute('playsinline', 'true');
+        video.setAttribute('webkit-playsinline', 'true');
+
+        // Handle codec issues gracefully
+        video.onerror = () => {
+          console.warn(`Video playback issue for ${media.name}. Using fallback.`);
+          // Mark as ready even on error to show thumbnail
+          videoSourcesRef.current.set(media.id, {
+            video,
+            mediaId: media.id,
+            ready: false,
+          });
+        };
 
         video.onloadeddata = () => {
           videoSourcesRef.current.set(media.id, {
@@ -103,12 +119,19 @@ export function Preview() {
     if (!project || !canvasRef.current) return;
 
     const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', {
+      alpha: false,
+      desynchronized: true,
+    });
     if (!ctx) return;
 
     // Set canvas size based on project resolution
     canvas.width = project.resolution.width;
     canvas.height = project.resolution.height;
+
+    // Enable high quality rendering
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
 
     // Clear canvas
     ctx.fillStyle = '#000000';
