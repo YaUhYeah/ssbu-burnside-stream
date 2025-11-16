@@ -190,26 +190,22 @@ export function useVideoWorker() {
 
   const addSubtitles = useCallback(
     async (videoFile: File, srtContent: string): Promise<Blob> => {
-      // For subtitles, we need special handling
+      // For subtitles, we need to pass both video and SRT data to the worker
       const inputData = await videoFile.arrayBuffer();
 
-      // Create a temporary SRT file in the worker
+      // Convert SRT content to bytes for FFmpeg virtual filesystem
       const encoder = new TextEncoder();
-      const _srtData = encoder.encode(srtContent);
+      const srtData = encoder.encode(srtContent);
 
-      const result = await sendMessage('transcode', {
-        inputData,
-        inputName: videoFile.name,
-        outputName: 'output.mp4',
-        args: [
-          '-vf',
-          `drawtext=text='${srtContent.replace(/'/g, "\\'")}':fontsize=24:fontcolor=white:x=(w-text_w)/2:y=h-100`,
-          '-c:a',
-          'copy',
-        ],
+      // Send both video and SRT data to worker for subtitle burning
+      const result = await sendMessage('addSubtitles', {
+        videoData: inputData,
+        videoName: videoFile.name,
+        srtData: srtData.buffer,
+        outputName: 'subtitled.mp4',
       });
 
-      return new Blob([result as ArrayBuffer]);
+      return new Blob([result as ArrayBuffer], { type: 'video/mp4' });
     },
     [sendMessage]
   );

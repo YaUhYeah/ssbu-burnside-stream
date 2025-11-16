@@ -50,6 +50,12 @@ function formatVTTTime(seconds: number): string {
 }
 
 // Generate FFmpeg command for export
+export interface FFmpegExportConfig {
+  args: string[];
+  srtContent?: string;
+  srtFilename?: string;
+}
+
 export function generateFFmpegCommand(
   project: Project,
   preset: ExportPreset,
@@ -58,8 +64,10 @@ export function generateFFmpegCommand(
     burnCaptions: boolean;
     outputPath: string;
   }
-): string[] {
+): FFmpegExportConfig {
   const args: string[] = [];
+  let srtContent: string | undefined;
+  let srtFilename: string | undefined;
 
   // Input files
   project.tracks.forEach((track) => {
@@ -86,9 +94,13 @@ export function generateFFmpegCommand(
 
   // Burn captions if requested
   if (options.burnCaptions && project.captions.length > 0) {
-    const _srt = captionsToSRT(project.captions);
-    // Note: In real implementation, write SRT to temp file
-    videoFilters.push(`subtitles=temp.srt`);
+    // Generate SRT content for subtitle burning
+    srtContent = captionsToSRT(project.captions);
+    srtFilename = 'subtitles.srt';
+    // Add subtitle filter with styling
+    videoFilters.push(
+      `subtitles=${srtFilename}:force_style='FontSize=24,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,BorderStyle=3,Outline=2,Shadow=1'`
+    );
   }
 
   if (videoFilters.length > 0) {
@@ -114,7 +126,11 @@ export function generateFFmpegCommand(
   // Output file
   args.push(options.outputPath);
 
-  return args;
+  return {
+    args,
+    srtContent,
+    srtFilename,
+  };
 }
 
 // Calculate estimated file size

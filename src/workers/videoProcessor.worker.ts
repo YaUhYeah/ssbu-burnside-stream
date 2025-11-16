@@ -30,6 +30,13 @@ interface AnalyzeAudioPayload {
   inputName: string;
 }
 
+interface AddSubtitlesPayload {
+  videoData: ArrayBuffer;
+  videoName: string;
+  srtData: ArrayBuffer;
+  outputName: string;
+}
+
 async function initFFmpeg(): Promise<void> {
   if (isLoaded) return;
 
@@ -218,6 +225,42 @@ async function generateWaveform(
   return peaks;
 }
 
+async function addSubtitles(payload: AddSubtitlesPayload): Promise<ArrayBuffer> {
+  if (!ffmpeg) throw new Error('FFmpeg not initialized');
+
+  // Write video file to FFmpeg virtual filesystem
+  await ffmpeg.writeFile(payload.videoName, new Uint8Array(payload.videoData));
+
+  // Write SRT file to FFmpeg virtual filesystem
+  const srtFileName = 'subtitles.srt';
+  await ffmpeg.writeFile(srtFileName, new Uint8Array(payload.srtData));
+
+  // Burn subtitles into video using ASS filter (converted from SRT)
+  // Note: We use subtitles filter which handles SRT directly
+  await ffmpeg.exec([
+    '-i',
+    payload.videoName,
+    '-vf',
+    `subtitles=${srtFileName}:force_style='FontSize=24,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,BorderStyle=3,Outline=2,Shadow=1'`,
+    '-c:a',
+    'copy',
+    '-c:v',
+    'libx264',
+    '-preset',
+    'fast',
+    payload.outputName,
+  ]);
+
+  const data = await ffmpeg.readFile(payload.outputName);
+
+  // Clean up files
+  await ffmpeg.deleteFile(payload.videoName);
+  await ffmpeg.deleteFile(srtFileName);
+  await ffmpeg.deleteFile(payload.outputName);
+
+  return (data as Uint8Array).buffer.slice(0) as ArrayBuffer;
+}
+
 // Message handler
 self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
   const { id, type, payload } = event.data;
@@ -251,6 +294,10 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
       case 'generateWaveform':
         const wfPayload = payload as { inputData: ArrayBuffer; inputName: string };
         result = await generateWaveform(wfPayload.inputData, wfPayload.inputName);
+        break;
+
+      case 'addSubtitles':
+        result = await addSubtitles(payload as AddSubtitlesPayload);
         break;
 
       default:
