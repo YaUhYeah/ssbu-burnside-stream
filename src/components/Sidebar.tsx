@@ -156,24 +156,34 @@ export function Sidebar() {
   );
 
   const handleMatchToMedia = () => {
-    if (pendingMedia && project) {
+    if (pendingMedia && project && pendingMedia.width && pendingMedia.height) {
       // Update project resolution to match media
-      const aspectRatio =
-        pendingMedia.width > pendingMedia.height
-          ? `${Math.round((pendingMedia.width / pendingMedia.height) * 9)}:9`
-          : `9:${Math.round((pendingMedia.height / pendingMedia.width) * 9)}`;
+      const mediaWidth = pendingMedia.width;
+      const mediaHeight = pendingMedia.height;
+
+      // Determine closest standard aspect ratio
+      const mediaAspect = mediaWidth / mediaHeight;
+      let aspectRatio: '16:9' | '9:16' | '1:1' | '4:5' | '4:3' = '16:9';
+
+      if (Math.abs(mediaAspect - 16/9) < 0.1) aspectRatio = '16:9';
+      else if (Math.abs(mediaAspect - 9/16) < 0.1) aspectRatio = '9:16';
+      else if (Math.abs(mediaAspect - 1) < 0.1) aspectRatio = '1:1';
+      else if (Math.abs(mediaAspect - 4/5) < 0.1) aspectRatio = '4:5';
+      else if (Math.abs(mediaAspect - 4/3) < 0.1) aspectRatio = '4:3';
+      else if (mediaWidth > mediaHeight) aspectRatio = '16:9';
+      else aspectRatio = '9:16';
 
       updateProject({
         resolution: {
-          width: pendingMedia.width,
-          height: pendingMedia.height,
-          label: `${pendingMedia.width}x${pendingMedia.height}`,
+          width: mediaWidth,
+          height: mediaHeight,
+          label: `${mediaWidth}x${mediaHeight}`,
         },
         aspectRatio,
       });
 
       addMedia(pendingMedia);
-      toast.success(`Project resolution updated to ${pendingMedia.width}x${pendingMedia.height}`);
+      toast.success(`Project resolution updated to ${mediaWidth}x${mediaHeight}`);
     }
     setPendingMedia(null);
     setShowResolutionDialog(false);
@@ -250,7 +260,7 @@ export function Sidebar() {
       </div>
 
       {/* Resolution matching dialog */}
-      {showResolutionDialog && pendingMedia && project && (
+      {showResolutionDialog && pendingMedia && project && pendingMedia.width && pendingMedia.height && (
         <ResolutionMatchDialog
           mediaName={pendingMedia.name}
           mediaWidth={pendingMedia.width}

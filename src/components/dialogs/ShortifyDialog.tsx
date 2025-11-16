@@ -192,14 +192,16 @@ export function ShortifyDialog() {
         const clipData = {
           id: clipId,
           mediaId: videoMedia.id,
+          trackId: shortTrackId,
           startTime: timelinePosition,
           duration: clip.end - clip.start,
           inPoint: clip.start,
           outPoint: clip.end,
           opacity: 1,
           volume: 1,
-          filters: [],
+          effects: [],
           transitions: [],
+          locked: false,
         };
         shortTrack.clips.push(clipData);
         timelinePosition += clip.end - clip.start;

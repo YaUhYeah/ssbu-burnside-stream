@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect, useMemo } from 'react';
 import { Plus, Minus, Lock, Eye, EyeOff, Volume2, VolumeX, Trash2, X, Magnet, Maximize, RotateCcw } from 'lucide-react';
 import { useProjectStore } from '@/stores/projectStore';
-import { cn, formatTime, timeToPixels, pixelsToTime, snapToGrid } from '@/lib/utils';
+import { cn, formatTime, timeToPixels, pixelsToTime } from '@/lib/utils';
 import toast from 'react-hot-toast';
 
 interface TimelineProps {
