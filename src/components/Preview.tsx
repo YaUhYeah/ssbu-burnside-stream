@@ -1,11 +1,17 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { Maximize2, Minimize2, Volume2, VolumeX } from 'lucide-react';
 import { useProjectStore } from '@/stores/projectStore';
 
+interface VideoSource {
+  video: HTMLVideoElement;
+  mediaId: string;
+  ready: boolean;
+}
+
 export function Preview() {
-  const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationRef = useRef<number>();
+  const videoSourcesRef = useRef<Map<string, VideoSource>>(new Map());
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
 
@@ -13,41 +19,87 @@ export function Preview() {
     project,
     currentTime,
     isPlaying,
-    setCurrentTime,
-    pause,
   } = useProjectStore();
 
-  // Handle playback
+  // Handle playback with proper delta timing
   useEffect(() => {
-    if (!project) return;
+    if (!project || !isPlaying) return;
 
-    const updateTime = () => {
-      if (isPlaying) {
-        setCurrentTime(currentTime + 1 / 60); // 60fps update
+    let lastTimestamp = performance.now();
 
-        // Stop at end
-        if (currentTime >= project.duration) {
-          pause();
-          setCurrentTime(0);
-        }
+    const updateTime = (timestamp: number) => {
+      const delta = (timestamp - lastTimestamp) / 1000; // Convert to seconds
+      lastTimestamp = timestamp;
 
-        animationRef.current = requestAnimationFrame(updateTime);
+      const { currentTime: time, setCurrentTime: setTime, pause: pausePlayback } = useProjectStore.getState();
+      const newTime = time + delta;
+
+      if (newTime >= project.duration) {
+        pausePlayback();
+        setTime(0);
+      } else {
+        setTime(newTime);
       }
+
+      animationRef.current = requestAnimationFrame(updateTime);
     };
 
-    if (isPlaying) {
-      animationRef.current = requestAnimationFrame(updateTime);
-    }
+    animationRef.current = requestAnimationFrame(updateTime);
 
     return () => {
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [isPlaying, currentTime, project, setCurrentTime, pause]);
+  }, [isPlaying, project]);
 
-  // Render preview
+  // Initialize video sources for all media
   useEffect(() => {
+    if (!project) return;
+
+    const videoMedia = project.media.filter((m) => m.type === 'video');
+
+    // Create video elements for each media file
+    videoMedia.forEach((media) => {
+      if (!videoSourcesRef.current.has(media.id)) {
+        const video = document.createElement('video');
+        video.src = media.path;
+        video.preload = 'auto';
+        video.muted = isMuted;
+        video.playsInline = true;
+
+        video.onloadeddata = () => {
+          videoSourcesRef.current.set(media.id, {
+            video,
+            mediaId: media.id,
+            ready: true,
+          });
+        };
+
+        videoSourcesRef.current.set(media.id, {
+          video,
+          mediaId: media.id,
+          ready: false,
+        });
+      }
+    });
+
+    // Update mute state
+    videoSourcesRef.current.forEach((source) => {
+      source.video.muted = isMuted;
+    });
+
+    return () => {
+      videoSourcesRef.current.forEach((source) => {
+        source.video.pause();
+        source.video.src = '';
+      });
+      videoSourcesRef.current.clear();
+    };
+  }, [project?.media, isMuted]);
+
+  // Render preview frame
+  const renderFrame = useCallback(() => {
     if (!project || !canvasRef.current) return;
 
     const canvas = canvasRef.current;
@@ -63,14 +115,8 @@ export function Preview() {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     // Find active clips at current time
-    const activeClips: Array<{
-      clip: typeof project.tracks[0]['clips'][0];
-      media: typeof project.media[0];
-      track: typeof project.tracks[0];
-    }> = [];
-
     project.tracks.forEach((track) => {
-      if (!track.visible || track.muted) return;
+      if (!track.visible) return;
 
       track.clips.forEach((clip) => {
         if (
@@ -78,25 +124,66 @@ export function Preview() {
           currentTime < clip.startTime + clip.duration
         ) {
           const media = project.media.find((m) => m.id === clip.mediaId);
-          if (media) {
-            activeClips.push({ clip, media, track });
+          if (!media) return;
+
+          if (media.type === 'video') {
+            const source = videoSourcesRef.current.get(media.id);
+            if (source?.ready) {
+              // Calculate position within source media
+              const relativeTime = currentTime - clip.startTime;
+              const sourceTime = clip.inPoint + relativeTime;
+
+              // Seek video if needed
+              if (Math.abs(source.video.currentTime - sourceTime) > 0.1) {
+                source.video.currentTime = sourceTime;
+              }
+
+              // Draw video frame
+              try {
+                ctx.globalAlpha = clip.opacity;
+                const videoAspect = source.video.videoWidth / source.video.videoHeight;
+                const canvasAspect = canvas.width / canvas.height;
+
+                let drawWidth = canvas.width;
+                let drawHeight = canvas.height;
+                let drawX = 0;
+                let drawY = 0;
+
+                if (videoAspect > canvasAspect) {
+                  drawHeight = canvas.width / videoAspect;
+                  drawY = (canvas.height - drawHeight) / 2;
+                } else {
+                  drawWidth = canvas.height * videoAspect;
+                  drawX = (canvas.width - drawWidth) / 2;
+                }
+
+                ctx.drawImage(source.video, drawX, drawY, drawWidth, drawHeight);
+                ctx.globalAlpha = 1;
+              } catch {
+                // Video not ready, show thumbnail
+                if (media.thumbnail) {
+                  const img = new Image();
+                  img.src = media.thumbnail;
+                  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                }
+              }
+            } else if (media.thumbnail) {
+              // Show thumbnail while loading
+              const img = new Image();
+              img.src = media.thumbnail;
+              ctx.globalAlpha = clip.opacity;
+              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+              ctx.globalAlpha = 1;
+            }
+          } else if (media.type === 'image' && media.thumbnail) {
+            const img = new Image();
+            img.src = media.thumbnail;
+            ctx.globalAlpha = clip.opacity;
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            ctx.globalAlpha = 1;
           }
         }
       });
-    });
-
-    // Render video tracks (bottom to top)
-    const videoClips = activeClips.filter((c) => c.track.type === 'video');
-    videoClips.forEach(({ clip, media }) => {
-      if (media.thumbnail) {
-        const img = new Image();
-        img.src = media.thumbnail;
-        img.onload = () => {
-          ctx.globalAlpha = clip.opacity;
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          ctx.globalAlpha = 1;
-        };
-      }
     });
 
     // Render captions
@@ -143,6 +230,11 @@ export function Preview() {
     });
   }, [project, currentTime]);
 
+  // Render on time change
+  useEffect(() => {
+    renderFrame();
+  }, [renderFrame]);
+
   const toggleFullscreen = () => {
     const container = canvasRef.current?.parentElement;
     if (!container) return;
@@ -174,9 +266,6 @@ export function Preview() {
             aspectRatio: `${project.resolution.width} / ${project.resolution.height}`,
           }}
         />
-
-        {/* Hidden video element for actual playback */}
-        <video ref={videoRef} className="hidden" muted={isMuted} />
       </div>
 
       {/* Preview controls */}

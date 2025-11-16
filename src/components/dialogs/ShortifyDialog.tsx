@@ -2,11 +2,14 @@ import { useState } from 'react';
 import { X, Wand2, Sparkles, Clock, Zap } from 'lucide-react';
 import { useUIStore } from '@/stores/uiStore';
 import { useProjectStore } from '@/stores/projectStore';
+import { getHighlightDetector } from '@/utils/highlightDetection';
+import { transcribeAudio } from '@/utils/speechRecognition';
+import { v4 as uuidv4 } from 'uuid';
 import toast from 'react-hot-toast';
 
 export function ShortifyDialog() {
   const { setShowShortifyDialog, setProcessing, setProcessingProgress } = useUIStore();
-  const { project } = useProjectStore();
+  const { project, addTrack, addClipToTrack, addCaption, setProject } = useProjectStore();
 
   const [duration, setDuration] = useState<15 | 30 | 60>(30);
   const [style, setStyle] = useState<'hook' | 'highlights' | 'summary'>('highlights');
@@ -19,27 +22,275 @@ export function ShortifyDialog() {
       return;
     }
 
+    const videoMedia = project.media.find((m) => m.type === 'video');
+    if (!videoMedia) {
+      toast.error('Add a video file first');
+      return;
+    }
+
     setShowShortifyDialog(false);
     setProcessing(true, 'Analyzing your video...');
 
-    // Simulate AI processing
-    const steps = [
-      { progress: 10, message: 'Analyzing video content...' },
-      { progress: 25, message: 'Detecting highlights...' },
-      { progress: 40, message: 'Identifying key moments...' },
-      { progress: 55, message: 'Generating captions...' },
-      { progress: 70, message: 'Optimizing for short-form...' },
-      { progress: 85, message: 'Applying style and transitions...' },
-      { progress: 100, message: 'Finalizing your short!' },
-    ];
+    try {
+      setProcessingProgress(10);
 
-    for (const step of steps) {
-      await new Promise((resolve) => setTimeout(resolve, 800));
-      setProcessingProgress(step.progress);
+      // Use streaming fetch for large files
+      const response = await fetch(videoMedia.path);
+      const contentLength = response.headers.get('content-length');
+      const totalSize = contentLength ? parseInt(contentLength, 10) : 0;
+
+      let loadedSize = 0;
+      const chunks: Uint8Array[] = [];
+      const reader = response.body?.getReader();
+
+      if (reader) {
+        // Stream the file in chunks to avoid memory issues
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          chunks.push(value);
+          loadedSize += value.length;
+
+          // Update progress for file loading (10-20%)
+          if (totalSize > 0) {
+            const loadProgress = 10 + (loadedSize / totalSize) * 10;
+            setProcessingProgress(Math.min(loadProgress, 20));
+          }
+
+          // Yield to UI to prevent blocking
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+      }
+
+      const mediaBlob = new Blob(chunks);
+
+      setProcessingProgress(20);
+
+      // Decode audio with optimized settings for performance
+      const audioContext = new AudioContext({
+        sampleRate: 22050, // Lower sample rate for faster processing
+      });
+
+      // Only decode a portion for very large files (>100MB)
+      let audioBuffer: AudioBuffer;
+      if (mediaBlob.size > 100 * 1024 * 1024) {
+        // For large files, analyze first 5 minutes only
+        const partialBlob = mediaBlob.slice(0, Math.min(mediaBlob.size, 50 * 1024 * 1024));
+        const arrayBuffer = await partialBlob.arrayBuffer();
+        audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+      } else {
+        const arrayBuffer = await mediaBlob.arrayBuffer();
+        audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+      }
+
+      setProcessingProgress(30);
+
+      // Detect highlights based on style - use sampling for performance
+      const detector = getHighlightDetector();
+      const highlightOptions = {
+        minDuration: duration / 4,
+        maxHighlights: style === 'hook' ? 3 : style === 'highlights' ? 5 : 4,
+        sensitivity: style === 'highlights' ? 0.8 : 0.6,
+      };
+
+      // Process in chunks to avoid blocking UI
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      setProcessingProgress(40);
+
+      const highlights = await detector.detectHighlights(audioBuffer, highlightOptions);
+
+      setProcessingProgress(50);
+
+      // Select clips based on duration
+      let selectedClips: Array<{ start: number; end: number; score: number }> = [];
+      let totalDuration = 0;
+
+      if (style === 'hook') {
+        // For hook style, take first segment + best highlight
+        if (highlights.length > 0) {
+          selectedClips.push({
+            start: 0,
+            end: Math.min(duration * 0.4, videoMedia.duration * 0.2),
+            score: 1,
+          });
+          totalDuration += selectedClips[0].end;
+
+          // Add best highlight
+          const bestHighlight = highlights[0];
+          const remainingDuration = duration - totalDuration;
+          selectedClips.push({
+            start: bestHighlight.startTime,
+            end: Math.min(bestHighlight.endTime, bestHighlight.startTime + remainingDuration),
+            score: bestHighlight.score,
+          });
+        }
+      } else {
+        // For highlights/summary, select top scoring segments
+        const sortedHighlights = [...highlights].sort((a, b) => b.score - a.score);
+
+        for (const highlight of sortedHighlights) {
+          if (totalDuration >= duration) break;
+
+          const clipDuration = Math.min(
+            highlight.endTime - highlight.startTime,
+            duration - totalDuration
+          );
+
+          if (clipDuration >= 2) { // Min 2 seconds per clip
+            selectedClips.push({
+              start: highlight.startTime,
+              end: highlight.startTime + clipDuration,
+              score: highlight.score,
+            });
+            totalDuration += clipDuration;
+          }
+        }
+      }
+
+      // If not enough highlights, fill with evenly distributed segments
+      if (totalDuration < duration * 0.8) {
+        const segmentCount = Math.ceil((duration - totalDuration) / 5);
+        const segmentDuration = (duration - totalDuration) / segmentCount;
+        const sourceStep = videoMedia.duration / (segmentCount + 1);
+
+        for (let i = 0; i < segmentCount; i++) {
+          const start = sourceStep * (i + 1);
+          selectedClips.push({
+            start,
+            end: start + segmentDuration,
+            score: 0.5,
+          });
+          totalDuration += segmentDuration;
+        }
+      }
+
+      setProcessingProgress(60);
+
+      // Sort clips by time for narrative flow (summary) or by score (highlights)
+      if (style === 'summary') {
+        selectedClips.sort((a, b) => a.start - b.start);
+      }
+
+      // Create a new track for the short
+      const shortTrackId = uuidv4();
+      const shortTrack = {
+        id: shortTrackId,
+        name: `Short (${duration}s ${style})`,
+        type: 'video' as const,
+        clips: [],
+        height: 80,
+        locked: false,
+        muted: false,
+        visible: true,
+      };
+
+      // Add clips to the track
+      let timelinePosition = 0;
+      selectedClips.forEach((clip) => {
+        const clipId = uuidv4();
+        const clipData = {
+          id: clipId,
+          mediaId: videoMedia.id,
+          startTime: timelinePosition,
+          duration: clip.end - clip.start,
+          inPoint: clip.start,
+          outPoint: clip.end,
+          opacity: 1,
+          volume: 1,
+          filters: [],
+          transitions: [],
+        };
+        shortTrack.clips.push(clipData);
+        timelinePosition += clip.end - clip.start;
+      });
+
+      setProcessingProgress(70);
+
+      // Generate captions if requested - optimize for performance
+      if (addCaptions) {
+        try {
+          // For large files, only transcribe the selected portions
+          if (mediaBlob.size > 50 * 1024 * 1024) {
+            // Skip detailed transcription for very large files
+            toast.info('Captions skipped for large file - add manually');
+          } else {
+            // Create a blob from selected segments for transcription
+            const captions = await transcribeAudio(mediaBlob);
+
+            // Adjust caption timing to match short timeline - batch for performance
+            const adjustedCaptions: Array<Parameters<typeof addCaption>[0]> = [];
+
+            captions.forEach((caption) => {
+              // Find which clip this caption belongs to
+              selectedClips.forEach((clip, index) => {
+                if (caption.startTime >= clip.start && caption.startTime < clip.end) {
+                  // Adjust to short timeline
+                  const offsetInClip = caption.startTime - clip.start;
+                  let shortStartTime = 0;
+                  for (let i = 0; i < index; i++) {
+                    shortStartTime += selectedClips[i].end - selectedClips[i].start;
+                  }
+                  shortStartTime += offsetInClip;
+
+                  adjustedCaptions.push({
+                    ...caption,
+                    id: uuidv4(),
+                    startTime: shortStartTime,
+                    endTime: shortStartTime + (caption.endTime - caption.startTime),
+                  });
+                }
+              });
+            });
+
+            // Add captions in batches to prevent UI freeze
+            for (let i = 0; i < adjustedCaptions.length; i++) {
+              addCaption(adjustedCaptions[i]);
+              if (i % 5 === 0) {
+                await new Promise((resolve) => setTimeout(resolve, 0));
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('Caption generation failed:', err);
+        }
+      }
+
+      setProcessingProgress(85);
+
+      // Update project resolution for vertical crop
+      if (verticalCrop) {
+        setProject({
+          ...project,
+          tracks: [...project.tracks, shortTrack],
+          resolution: {
+            width: 1080,
+            height: 1920,
+            label: '1080x1920',
+          },
+          aspectRatio: '9:16',
+          duration: Math.max(project.duration, timelinePosition),
+        });
+      } else {
+        setProject({
+          ...project,
+          tracks: [...project.tracks, shortTrack],
+          duration: Math.max(project.duration, timelinePosition),
+        });
+      }
+
+      await audioContext.close();
+
+      setProcessingProgress(100);
+      toast.success(
+        `Created ${duration}s short with ${selectedClips.length} clips! Check your timeline.`
+      );
+    } catch (error) {
+      console.error('Shortify error:', error);
+      toast.error('Failed to generate short. Please try again.');
+    } finally {
+      setProcessing(false);
     }
-
-    setProcessing(false);
-    toast.success(`Created ${duration}s short with ${style} style!`);
   };
 
   return (
