@@ -31,12 +31,86 @@ export interface TimelineClip {
 export interface Track {
   id: string;
   name: string;
-  type: 'video' | 'audio' | 'caption' | 'overlay';
+  type: 'video' | 'audio' | 'caption' | 'overlay' | 'text';
   muted: boolean;
   locked: boolean;
   visible: boolean;
   height: number;
   clips: TimelineClip[];
+}
+
+export interface TextOverlay {
+  id: string;
+  text: string;
+  startTime: number;
+  endTime: number;
+  style: TextStyle;
+  animation: TextAnimation;
+  position: { x: number; y: number }; // 0-100 percentage
+}
+
+export interface TextStyle {
+  fontFamily: string;
+  fontSize: number;
+  fontWeight: 'normal' | 'bold' | 'light' | 'black';
+  fontStyle: 'normal' | 'italic';
+  color: string;
+  backgroundColor?: string;
+  backgroundPadding?: number;
+  backgroundRadius?: number;
+  strokeColor?: string;
+  strokeWidth?: number;
+  shadowColor?: string;
+  shadowBlur?: number;
+  shadowOffsetX?: number;
+  shadowOffsetY?: number;
+  letterSpacing?: number;
+  lineHeight?: number;
+  textAlign: 'left' | 'center' | 'right';
+  textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize';
+  opacity?: number;
+  rotation?: number;
+  scale?: number;
+}
+
+export interface TextAnimation {
+  type: TextAnimationType;
+  duration: number;
+  delay?: number;
+  easing: 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out' | 'bounce' | 'elastic';
+  direction?: 'in' | 'out' | 'both';
+}
+
+export type TextAnimationType =
+  | 'none'
+  | 'fade'
+  | 'slide-up'
+  | 'slide-down'
+  | 'slide-left'
+  | 'slide-right'
+  | 'scale'
+  | 'bounce'
+  | 'typewriter'
+  | 'glitch'
+  | 'wave'
+  | 'shake'
+  | 'rotate-in'
+  | 'flip'
+  | 'zoom-in'
+  | 'blur-in'
+  | 'split-reveal'
+  | 'kinetic';
+
+export interface TextTemplate {
+  id: string;
+  name: string;
+  category: 'titles' | 'lower-thirds' | 'captions' | 'callouts' | 'social' | 'cinematic';
+  preview: string;
+  style: TextStyle;
+  animation: TextAnimation;
+  defaultText: string;
+  defaultPosition: { x: number; y: number };
+  duration: number;
 }
 
 export interface Effect {
@@ -139,6 +213,7 @@ export interface Project {
   tracks: Track[];
   media: MediaFile[];
   captions: Caption[];
+  textOverlays: TextOverlay[];
   settings: ProjectSettings;
 }
 

@@ -10,6 +10,7 @@ import type {
   Caption,
   AspectRatio,
   Resolution,
+  TextOverlay,
 } from '@/types';
 
 interface ProjectState {
@@ -54,6 +55,11 @@ interface ProjectActions {
   addCaption: (caption: Caption) => void;
   updateCaption: (captionId: string, updates: Partial<Caption>) => void;
   removeCaption: (captionId: string) => void;
+
+  // Text Overlays
+  addTextOverlay: (textOverlay: TextOverlay) => void;
+  updateTextOverlay: (textOverlayId: string, updates: Partial<TextOverlay>) => void;
+  removeTextOverlay: (textOverlayId: string) => void;
 
   // Selection
   selectClip: (clipId: string, multi?: boolean) => void;
@@ -125,6 +131,7 @@ const createDefaultProject = (name: string, aspectRatio: AspectRatio): Project =
   ],
   media: [],
   captions: [],
+  textOverlays: [],
   settings: {
     autoSave: true,
     autoSaveInterval: 60000,
@@ -447,6 +454,36 @@ export const useProjectStore = create<ProjectState & ProjectActions>()(
         set((state) => {
           if (state.project) {
             state.project.captions = state.project.captions.filter((c) => c.id !== captionId);
+            state.isDirty = true;
+          }
+        });
+      },
+
+      addTextOverlay: (textOverlay) => {
+        set((state) => {
+          if (state.project) {
+            state.project.textOverlays.push(textOverlay);
+            state.isDirty = true;
+          }
+        });
+      },
+
+      updateTextOverlay: (textOverlayId, updates) => {
+        set((state) => {
+          if (state.project) {
+            const overlay = state.project.textOverlays.find((t) => t.id === textOverlayId);
+            if (overlay) {
+              Object.assign(overlay, updates);
+              state.isDirty = true;
+            }
+          }
+        });
+      },
+
+      removeTextOverlay: (textOverlayId) => {
+        set((state) => {
+          if (state.project) {
+            state.project.textOverlays = state.project.textOverlays.filter((t) => t.id !== textOverlayId);
             state.isDirty = true;
           }
         });

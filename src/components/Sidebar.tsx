@@ -10,6 +10,7 @@ import {
   Trash2,
   Play,
   LayoutTemplate,
+  TextCursor,
 } from 'lucide-react';
 import { useUIStore } from '@/stores/uiStore';
 import { useProjectStore } from '@/stores/projectStore';
@@ -17,12 +18,14 @@ import { cn, formatFileSize, formatDuration, getMediaType } from '@/lib/utils';
 import type { MediaFile, AspectRatio, EffectType, TransitionType, Effect, Transition } from '@/types';
 import toast from 'react-hot-toast';
 import { ResolutionMatchDialog } from './dialogs/ResolutionMatchDialog';
+import { TextPanel } from './TextPanel';
 
-type PanelType = 'media' | 'effects' | 'captions' | 'templates' | 'export';
+type PanelType = 'media' | 'effects' | 'text' | 'captions' | 'templates' | 'export';
 
 const PANEL_ICONS: Record<PanelType, typeof Film> = {
   media: Film,
   effects: Sparkles,
+  text: TextCursor,
   captions: Type,
   templates: LayoutTemplate,
   export: Upload,
@@ -221,6 +224,8 @@ export function Sidebar() {
         return <MediaPanel onDrop={onDrop} isDragActive={isDragActive} getRootProps={getRootProps} getInputProps={getInputProps} />;
       case 'effects':
         return <EffectsPanel />;
+      case 'text':
+        return <TextPanel />;
       case 'captions':
         return <CaptionsPanel />;
       case 'templates':

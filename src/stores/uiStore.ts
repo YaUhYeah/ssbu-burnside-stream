@@ -6,7 +6,7 @@ interface UIState {
   preferences: UserPreferences;
   notifications: Notification[];
   sidebarOpen: boolean;
-  currentPanel: 'media' | 'effects' | 'captions' | 'templates' | 'export';
+  currentPanel: 'media' | 'effects' | 'text' | 'captions' | 'templates' | 'export';
   showOnboarding: boolean;
   onboardingStep: number;
   showNewProjectDialog: boolean;
