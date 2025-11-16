@@ -20,7 +20,7 @@ export function ShortifyDialog() {
     }
 
     setShowShortifyDialog(false);
-    setProcessing(true, 'AI is analyzing your video...');
+    setProcessing(true, 'Analyzing your video...');
 
     // Simulate AI processing
     const steps = [
@@ -50,7 +50,7 @@ export function ShortifyDialog() {
             <div className="rounded-lg bg-gradient-to-r from-purple-500 to-pink-500 p-2">
               <Wand2 className="h-5 w-5 text-white" />
             </div>
-            <h2 className="text-xl font-semibold">AI Shortify</h2>
+            <h2 className="text-xl font-semibold">Auto Shortify</h2>
           </div>
           <button
             onClick={() => setShowShortifyDialog(false)}

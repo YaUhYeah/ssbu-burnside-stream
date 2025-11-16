@@ -356,7 +356,7 @@ function CaptionsPanel() {
       return;
     }
 
-    setProcessing(true, 'Generating captions with AI...');
+    setProcessing(true, 'Generating captions...');
 
     // Simulate AI caption generation
     for (let i = 0; i <= 100; i += 10) {

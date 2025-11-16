@@ -36,7 +36,7 @@ export function useAIFeatures() {
     }
 
     setState({ isProcessing: true, progress: 0, currentTask: 'Preparing audio...' });
-    setProcessing(true, 'Generating captions with AI...');
+    setProcessing(true, 'Generating captions...');
 
     try {
       // Find first video or audio file
@@ -97,7 +97,7 @@ export function useAIFeatures() {
     }
 
     setState({ isProcessing: true, progress: 0, currentTask: 'Analyzing media...' });
-    setProcessing(true, 'Detecting highlights with AI...');
+    setProcessing(true, 'Detecting highlights...');
 
     try {
       const mediaFile = project.media.find(

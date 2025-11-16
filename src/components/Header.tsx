@@ -174,7 +174,7 @@ export function Header() {
         <button
           onClick={() => setShowShortifyDialog(true)}
           className="flex items-center gap-1 rounded-md bg-gradient-to-r from-purple-500 to-pink-500 px-3 py-2 text-sm font-medium text-white hover:from-purple-600 hover:to-pink-600"
-          title="AI Shortify"
+          title="Auto Shortify"
           data-onboarding="shortify"
         >
           <Wand2 className="h-4 w-4" />

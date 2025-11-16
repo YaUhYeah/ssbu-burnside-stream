@@ -100,7 +100,7 @@ export const ONBOARDING_STEPS: OnboardingStep[] = [
   {
     id: 'shortify',
     title: 'One-Click Shortify',
-    description: 'Turn long videos into engaging shorts automatically with AI.',
+    description: 'Turn long videos into engaging shorts automatically.',
     target: '[data-onboarding="shortify"]',
     position: 'bottom',
   },
@@ -121,7 +121,7 @@ export const useUIStore = create<UIState & UIActions>()(
       notifications: [],
       sidebarOpen: true,
       currentPanel: 'media',
-      showOnboarding: true,
+      showOnboarding: false,
       onboardingStep: 0,
       showNewProjectDialog: false,
       showExportDialog: false,

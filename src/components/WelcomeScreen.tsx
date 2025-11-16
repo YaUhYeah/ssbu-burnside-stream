@@ -15,7 +15,7 @@ export function WelcomeScreen() {
           <div>
             <h1 className="text-3xl font-bold">ClipFlow Studio</h1>
             <p className="text-muted-foreground">
-              AI-Powered Video Editor for Creators
+              Smart Video Editor for Creators
             </p>
           </div>
         </div>
@@ -64,7 +64,7 @@ export function WelcomeScreen() {
             <div className="text-center">
               <h3 className="font-semibold">Quick Short</h3>
               <p className="text-sm text-muted-foreground">
-                AI-assisted creation
+                Auto-assisted creation
               </p>
             </div>
           </button>
@@ -76,7 +76,7 @@ export function WelcomeScreen() {
             'Auto Captions',
             'Smart Highlights',
             'One-Click Export',
-            'AI Shortify',
+            'Auto Shortify',
             'Templates',
             'Multi-Track Audio',
             'Color Correction',
