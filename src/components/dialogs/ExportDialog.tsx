@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { X, Download, Check } from 'lucide-react';
 import { useUIStore } from '@/stores/uiStore';
 import { useProjectStore } from '@/stores/projectStore';
-import type { ExportPreset, Platform } from '@/types';
+import type { ExportPreset } from '@/types';
 import toast from 'react-hot-toast';
 
 const EXPORT_PRESETS: ExportPreset[] = [

@@ -29,7 +29,7 @@ const PANEL_ICONS: Record<PanelType, typeof Film> = {
 
 export function Sidebar() {
   const { currentPanel, setCurrentPanel } = useUIStore();
-  const { project, addMedia } = useProjectStore();
+  const { addMedia } = useProjectStore();
 
   const onDrop = useCallback(
     async (acceptedFiles: File[]) => {

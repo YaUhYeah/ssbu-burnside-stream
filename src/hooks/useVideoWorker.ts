@@ -195,7 +195,7 @@ export function useVideoWorker() {
 
       // Create a temporary SRT file in the worker
       const encoder = new TextEncoder();
-      const srtData = encoder.encode(srtContent);
+      const _srtData = encoder.encode(srtContent);
 
       const result = await sendMessage('transcode', {
         inputData,

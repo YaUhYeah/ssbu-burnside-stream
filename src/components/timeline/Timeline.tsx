@@ -1,7 +1,8 @@
 import { useRef, useState, useEffect } from 'react';
-import { Plus, Minus, Lock, Eye, EyeOff, Volume2, VolumeX } from 'lucide-react';
+import { Plus, Minus, Lock, Eye, EyeOff, Volume2, VolumeX, Trash2, X } from 'lucide-react';
 import { useProjectStore } from '@/stores/projectStore';
 import { cn, formatTime, timeToPixels, pixelsToTime, snapToGrid } from '@/lib/utils';
+import toast from 'react-hot-toast';
 
 interface TimelineProps {
   simplified?: boolean;
@@ -14,6 +15,7 @@ export function Timeline({ simplified = false }: TimelineProps) {
   const [dragClipId, setDragClipId] = useState<string | null>(null);
   const [dragStartX, setDragStartX] = useState(0);
   const [dragStartTime, setDragStartTime] = useState(0);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; trackId: string; clipId: string } | null>(null);
 
   const {
     project,
@@ -29,6 +31,8 @@ export function Timeline({ simplified = false }: TimelineProps) {
     updateClip,
     updateTrack,
     addTrack,
+    removeClip,
+    removeTrack,
   } = useProjectStore();
 
   const pixelsPerSecond = 50;
@@ -61,7 +65,7 @@ export function Timeline({ simplified = false }: TimelineProps) {
   // Handle clip drag
   const handleClipMouseDown = (
     e: React.MouseEvent,
-    trackId: string,
+    _trackId: string,
     clipId: string,
     clipStartTime: number
   ) => {
@@ -91,7 +95,7 @@ export function Timeline({ simplified = false }: TimelineProps) {
     for (const track of project.tracks) {
       const clip = track.clips.find((c) => c.id === dragClipId);
       if (clip) {
-        updateClip(track.id, clipId, { startTime: newTime });
+        updateClip(track.id, clip.id, { startTime: newTime });
         break;
       }
     }
@@ -113,6 +117,59 @@ export function Timeline({ simplified = false }: TimelineProps) {
       window.removeEventListener('mouseup', handleMouseUp);
     };
   }, [isDragging, dragClipId, dragStartX, dragStartTime]);
+
+  // Handle keyboard shortcuts for clip deletion
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedClipIds.length > 0 && project) {
+        e.preventDefault();
+        // Find and remove selected clips
+        for (const clipId of selectedClipIds) {
+          for (const track of project.tracks) {
+            const clip = track.clips.find((c) => c.id === clipId);
+            if (clip) {
+              removeClip(track.id, clipId);
+              break;
+            }
+          }
+        }
+        deselectAllClips();
+        toast.success(`Removed ${selectedClipIds.length} clip${selectedClipIds.length > 1 ? 's' : ''}`);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedClipIds, project, removeClip, deselectAllClips]);
+
+  // Close context menu when clicking elsewhere
+  useEffect(() => {
+    const handleClick = () => setContextMenu(null);
+    window.addEventListener('click', handleClick);
+    return () => window.removeEventListener('click', handleClick);
+  }, []);
+
+  const handleClipContextMenu = (e: React.MouseEvent, trackId: string, clipId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ x: e.clientX, y: e.clientY, trackId, clipId });
+  };
+
+  const handleDeleteClip = (trackId: string, clipId: string) => {
+    removeClip(trackId, clipId);
+    deselectAllClips();
+    setContextMenu(null);
+    toast.success('Clip removed');
+  };
+
+  const handleDeleteTrack = (trackId: string, trackName: string) => {
+    if (project && project.tracks.length <= 1) {
+      toast.error('Cannot delete the last track');
+      return;
+    }
+    removeTrack(trackId);
+    toast.success(`Removed ${trackName}`);
+  };
 
   if (!project) return null;
 
@@ -196,7 +253,7 @@ export function Timeline({ simplified = false }: TimelineProps) {
           {project.tracks.map((track) => (
             <div
               key={track.id}
-              className="flex items-center justify-between border-b border-border px-2"
+              className="group flex items-center justify-between border-b border-border px-2"
               style={{ height: track.height }}
             >
               <span className="text-xs font-medium truncate">{track.name}</span>
@@ -209,6 +266,7 @@ export function Timeline({ simplified = false }: TimelineProps) {
                     'rounded p-1 hover:bg-accent',
                     track.muted && 'text-destructive'
                   )}
+                  title={track.muted ? 'Unmute' : 'Mute'}
                 >
                   {track.muted ? (
                     <VolumeX className="h-3 w-3" />
@@ -224,6 +282,7 @@ export function Timeline({ simplified = false }: TimelineProps) {
                     'rounded p-1 hover:bg-accent',
                     !track.visible && 'text-destructive'
                   )}
+                  title={track.visible ? 'Hide' : 'Show'}
                 >
                   {track.visible ? (
                     <Eye className="h-3 w-3" />
@@ -239,8 +298,16 @@ export function Timeline({ simplified = false }: TimelineProps) {
                     'rounded p-1 hover:bg-accent',
                     track.locked && 'text-yellow-500'
                   )}
+                  title={track.locked ? 'Unlock' : 'Lock'}
                 >
                   <Lock className="h-3 w-3" />
+                </button>
+                <button
+                  onClick={() => handleDeleteTrack(track.id, track.name)}
+                  className="rounded p-1 text-muted-foreground opacity-0 hover:bg-destructive hover:text-destructive-foreground group-hover:opacity-100"
+                  title="Delete track"
+                >
+                  <X className="h-3 w-3" />
                 </button>
               </div>
             </div>
@@ -308,6 +375,7 @@ export function Timeline({ simplified = false }: TimelineProps) {
                           clip.startTime
                         )
                       }
+                      onContextMenu={(e) => handleClipContextMenu(e, track.id, clip.id)}
                     >
                       <div className="flex h-full flex-col justify-between p-1">
                         <span className="truncate text-[10px] font-medium text-white">
@@ -339,6 +407,23 @@ export function Timeline({ simplified = false }: TimelineProps) {
           </div>
         </div>
       </div>
+
+      {/* Context menu */}
+      {contextMenu && (
+        <div
+          className="fixed z-50 min-w-32 rounded-md border border-border bg-card py-1 shadow-lg"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={() => handleDeleteClip(contextMenu.trackId, contextMenu.clipId)}
+            className="flex w-full items-center gap-2 px-3 py-2 text-sm text-destructive hover:bg-accent"
+          >
+            <Trash2 className="h-4 w-4" />
+            Delete Clip
+          </button>
+        </div>
+      )}
     </div>
   );
 }

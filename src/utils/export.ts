@@ -86,7 +86,7 @@ export function generateFFmpegCommand(
 
   // Burn captions if requested
   if (options.burnCaptions && project.captions.length > 0) {
-    const srt = captionsToSRT(project.captions);
+    const _srt = captionsToSRT(project.captions);
     // Note: In real implementation, write SRT to temp file
     videoFilters.push(`subtitles=temp.srt`);
   }

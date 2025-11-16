@@ -1,6 +1,6 @@
 // Web Worker for heavy video processing tasks
 import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { fetchFile, toBlobURL } from '@ffmpeg/util';
+import { toBlobURL } from '@ffmpeg/util';
 
 let ffmpeg: FFmpeg | null = null;
 let isLoaded = false;
@@ -73,7 +73,7 @@ async function transcode(payload: TranscodePayload): Promise<ArrayBuffer> {
   await ffmpeg.deleteFile(payload.inputName);
   await ffmpeg.deleteFile(payload.outputName);
 
-  return (data as Uint8Array).buffer;
+  return (data as Uint8Array).buffer.slice(0) as ArrayBuffer;
 }
 
 async function extractFrames(payload: ExtractFramesPayload): Promise<ArrayBuffer[]> {
@@ -102,7 +102,7 @@ async function extractFrames(payload: ExtractFramesPayload): Promise<ArrayBuffer
     const frameName = `frame_${i.toString().padStart(4, '0')}.jpg`;
     try {
       const frameData = await ffmpeg.readFile(frameName);
-      frames.push((frameData as Uint8Array).buffer);
+      frames.push((frameData as Uint8Array).buffer.slice(0) as ArrayBuffer);
       await ffmpeg.deleteFile(frameName);
     } catch {
       // No more frames

@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Maximize2, Minimize2, Volume2, VolumeX } from 'lucide-react';
 import { useProjectStore } from '@/stores/projectStore';
-import { cn } from '@/lib/utils';
 
 export function Preview() {
   const videoRef = useRef<HTMLVideoElement>(null);

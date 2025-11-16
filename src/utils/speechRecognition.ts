@@ -34,9 +34,9 @@ interface SpeechRecognitionResultList {
 // Production-ready speech recognition using Web Speech API with fallback
 export class SpeechTranscriber {
   private recognition: any;
-  private mediaRecorder: MediaRecorder | null = null;
-  private audioContext: AudioContext | null = null;
-  private audioChunks: Blob[] = [];
+  private _mediaRecorder: MediaRecorder | null = null;
+  private _audioContext: AudioContext | null = null;
+  private _audioChunks: Blob[] = [];
   private transcripts: TranscriptionResult[] = [];
   private startTimestamp: number = 0;
   private isRunning: boolean = false;

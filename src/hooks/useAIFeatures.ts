@@ -2,10 +2,10 @@ import { useState, useCallback } from 'react';
 import { useProjectStore } from '@/stores/projectStore';
 import { useUIStore } from '@/stores/uiStore';
 import { transcribeAudio, optimizeCaptionTiming, identifySpeakers } from '@/utils/speechRecognition';
-import { getHighlightDetector, detectCombinedHighlights } from '@/utils/highlightDetection';
+import { getHighlightDetector } from '@/utils/highlightDetection';
 import { getAudioProcessor } from '@/utils/audioProcessor';
 import { detectSilence, suggestBRollPoints, summarizeContent, generateHashtags } from '@/utils/ai';
-import type { Caption, Highlight, MediaFile } from '@/types';
+import type { Caption, Highlight } from '@/types';
 import toast from 'react-hot-toast';
 
 interface AIFeatureState {

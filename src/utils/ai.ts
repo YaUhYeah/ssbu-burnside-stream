@@ -1,4 +1,5 @@
-import * as ort from 'onnxruntime-web';
+// ONNX Runtime Web can be enabled for advanced AI features
+// import * as ort from 'onnxruntime-web';
 import { v4 as uuidv4 } from 'uuid';
 import type { Caption, Highlight, CaptionStyle } from '@/types';
 
@@ -131,7 +132,7 @@ function getDefaultCaptionStyle(): CaptionStyle {
 // Highlight Detection
 export async function detectHighlights(
   audioData: Float32Array,
-  videoDuration: number
+  _videoDuration: number
 ): Promise<Highlight[]> {
   const highlights: Highlight[] = [];
   const windowSize = 44100; // 1 second window at 44.1kHz

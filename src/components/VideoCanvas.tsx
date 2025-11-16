@@ -11,7 +11,7 @@ export function VideoCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoSourcesRef = useRef<Map<string, VideoSource>>(new Map());
   const animationFrameRef = useRef<number>();
-  const lastTimeRef = useRef<number>(0);
+  const _lastTimeRef = useRef<number>(0);
 
   const { project, currentTime, isPlaying, setCurrentTime, pause } = useProjectStore();
 
