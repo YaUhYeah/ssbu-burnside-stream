@@ -161,6 +161,13 @@ export function Preview() {
                 source.video.currentTime = sourceTime;
               }
 
+              // Ensure video is playing if we're in playback mode
+              if (isPlaying && source.video.paused) {
+                source.video.play().catch(() => {});
+              } else if (!isPlaying && !source.video.paused) {
+                source.video.pause();
+              }
+
               // Draw video frame
               try {
                 ctx.globalAlpha = clip.opacity;

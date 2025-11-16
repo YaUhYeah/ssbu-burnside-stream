@@ -2,15 +2,13 @@ import { useState } from 'react';
 import { X, Wand2, Sparkles, Clock, Zap } from 'lucide-react';
 import { useUIStore } from '@/stores/uiStore';
 import { useProjectStore } from '@/stores/projectStore';
-import { getHighlightDetector } from '@/utils/highlightDetection';
-import { transcribeAudio } from '@/utils/speechRecognition';
 import { v4 as uuidv4 } from 'uuid';
 import toast from 'react-hot-toast';
 import type { Track, TimelineClip } from '@/types';
 
 export function ShortifyDialog() {
   const { setShowShortifyDialog, setProcessing, setProcessingProgress } = useUIStore();
-  const { project, addCaption, updateProject } = useProjectStore();
+  const { project, updateProject } = useProjectStore();
 
   const [duration, setDuration] = useState<15 | 30 | 60>(30);
   const [style, setStyle] = useState<'hook' | 'highlights' | 'summary'>('highlights');
@@ -30,145 +28,101 @@ export function ShortifyDialog() {
     }
 
     setShowShortifyDialog(false);
-    setProcessing(true, 'Analyzing your video...');
+    setProcessing(true, 'Generating short clips...');
 
     try {
       setProcessingProgress(10);
 
-      // Use streaming fetch for large files
-      const response = await fetch(videoMedia.path);
-      const contentLength = response.headers.get('content-length');
-      const totalSize = contentLength ? parseInt(contentLength, 10) : 0;
+      // Use lightweight time-based segmentation instead of heavy audio analysis
+      // This prevents memory issues and app crashes with large files
+      const videoDuration = videoMedia.duration;
 
-      let loadedSize = 0;
-      const chunks: Uint8Array[] = [];
-      const reader = response.body?.getReader();
-
-      if (reader) {
-        // Stream the file in chunks to avoid memory issues
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          chunks.push(value);
-          loadedSize += value.length;
-
-          // Update progress for file loading (10-20%)
-          if (totalSize > 0) {
-            const loadProgress = 10 + (loadedSize / totalSize) * 10;
-            setProcessingProgress(Math.min(loadProgress, 20));
-          }
-
-          // Yield to UI to prevent blocking
-          await new Promise((resolve) => setTimeout(resolve, 0));
-        }
-      }
-
-      const mediaBlob = new Blob(chunks as BlobPart[]);
-
-      setProcessingProgress(20);
-
-      // Decode audio with optimized settings for performance
-      const audioContext = new AudioContext({
-        sampleRate: 22050, // Lower sample rate for faster processing
-      });
-
-      // Only decode a portion for very large files (>100MB)
-      let audioBuffer: AudioBuffer;
-      if (mediaBlob.size > 100 * 1024 * 1024) {
-        // For large files, analyze first 5 minutes only
-        const partialBlob = mediaBlob.slice(0, Math.min(mediaBlob.size, 50 * 1024 * 1024));
-        const arrayBuffer = await partialBlob.arrayBuffer();
-        audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-      } else {
-        const arrayBuffer = await mediaBlob.arrayBuffer();
-        audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+      if (videoDuration < duration) {
+        toast.error(`Video is shorter than ${duration}s target duration`);
+        setProcessing(false);
+        return;
       }
 
       setProcessingProgress(30);
 
-      // Detect highlights based on style - use sampling for performance
-      const detector = getHighlightDetector();
-      const highlightOptions = {
-        minDuration: duration / 4,
-        maxHighlights: style === 'hook' ? 3 : style === 'highlights' ? 5 : 4,
-        sensitivity: style === 'highlights' ? 0.8 : 0.6,
-      };
-
-      // Process in chunks to avoid blocking UI
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      setProcessingProgress(40);
-
-      const highlights = await detector.detectHighlights(audioBuffer, highlightOptions);
-
-      setProcessingProgress(50);
-
-      // Select clips based on duration
+      // Generate smart segments based on style without loading entire file
       let selectedClips: Array<{ start: number; end: number; score: number }> = [];
       let totalDuration = 0;
 
-      if (style === 'hook') {
-        // For hook style, take first segment + best highlight
-        if (highlights.length > 0) {
-          selectedClips.push({
-            start: 0,
-            end: Math.min(duration * 0.4, videoMedia.duration * 0.2),
-            score: 1,
-          });
-          totalDuration += selectedClips[0].end;
+      // Yield to UI
+      await new Promise((resolve) => setTimeout(resolve, 10));
 
-          // Add best highlight
-          const bestHighlight = highlights[0];
-          const remainingDuration = duration - totalDuration;
+      if (style === 'hook') {
+        // Hook style: attention-grabbing start + middle highlight + end CTA
+        const hookDuration = Math.min(duration * 0.4, 12);
+        const highlightDuration = Math.min(duration * 0.4, 12);
+        const ctaDuration = duration - hookDuration - highlightDuration;
+
+        selectedClips.push({
+          start: 0,
+          end: hookDuration,
+          score: 1,
+        });
+
+        // Pick an interesting middle section
+        const middleStart = videoDuration * 0.4;
+        selectedClips.push({
+          start: middleStart,
+          end: middleStart + highlightDuration,
+          score: 0.9,
+        });
+
+        if (ctaDuration > 0) {
+          // End section for CTA
+          const endStart = Math.max(videoDuration - ctaDuration - 5, videoDuration * 0.8);
           selectedClips.push({
-            start: bestHighlight.startTime,
-            end: Math.min(bestHighlight.endTime, bestHighlight.startTime + remainingDuration),
-            score: bestHighlight.score,
+            start: endStart,
+            end: endStart + ctaDuration,
+            score: 0.8,
           });
+        }
+
+        totalDuration = hookDuration + highlightDuration + ctaDuration;
+      } else if (style === 'highlights') {
+        // Highlights style: pick evenly distributed segments from interesting parts
+        const numSegments = Math.ceil(duration / 8); // ~8 second segments
+        const segmentDuration = duration / numSegments;
+
+        // Focus on middle portions (usually more interesting than start/end)
+        const startOffset = videoDuration * 0.1;
+        const endOffset = videoDuration * 0.9;
+        const availableDuration = endOffset - startOffset;
+        const step = availableDuration / (numSegments + 1);
+
+        for (let i = 0; i < numSegments; i++) {
+          const start = startOffset + step * (i + 1) - segmentDuration / 2;
+          selectedClips.push({
+            start: Math.max(0, start),
+            end: Math.min(start + segmentDuration, videoDuration),
+            score: 1 - (i * 0.1),
+          });
+          totalDuration += segmentDuration;
         }
       } else {
-        // For highlights/summary, select top scoring segments
-        const sortedHighlights = [...highlights].sort((a, b) => b.score - a.score);
+        // Summary style: chronological sampling throughout video
+        const numSegments = Math.ceil(duration / 10); // ~10 second segments
+        const segmentDuration = duration / numSegments;
+        const step = videoDuration / numSegments;
 
-        for (const highlight of sortedHighlights) {
-          if (totalDuration >= duration) break;
-
-          const clipDuration = Math.min(
-            highlight.endTime - highlight.startTime,
-            duration - totalDuration
-          );
-
-          if (clipDuration >= 2) { // Min 2 seconds per clip
-            selectedClips.push({
-              start: highlight.startTime,
-              end: highlight.startTime + clipDuration,
-              score: highlight.score,
-            });
-            totalDuration += clipDuration;
-          }
-        }
-      }
-
-      // If not enough highlights, fill with evenly distributed segments
-      if (totalDuration < duration * 0.8) {
-        const segmentCount = Math.ceil((duration - totalDuration) / 5);
-        const segmentDuration = (duration - totalDuration) / segmentCount;
-        const sourceStep = videoMedia.duration / (segmentCount + 1);
-
-        for (let i = 0; i < segmentCount; i++) {
-          const start = sourceStep * (i + 1);
+        for (let i = 0; i < numSegments; i++) {
+          const start = step * i + step * 0.2; // Offset slightly into each section
           selectedClips.push({
-            start,
-            end: start + segmentDuration,
-            score: 0.5,
+            start: Math.max(0, start),
+            end: Math.min(start + segmentDuration, videoDuration),
+            score: 1,
           });
           totalDuration += segmentDuration;
         }
       }
 
-      setProcessingProgress(60);
+      setProcessingProgress(50);
 
-      // Sort clips by time for narrative flow (summary) or by score (highlights)
+      // Sort clips by time for narrative flow (summary) or keep as-is
       if (style === 'summary') {
         selectedClips.sort((a, b) => a.start - b.start);
       }
@@ -210,53 +164,9 @@ export function ShortifyDialog() {
 
       setProcessingProgress(70);
 
-      // Generate captions if requested - optimize for performance
+      // Skip heavy caption generation to avoid memory issues
       if (addCaptions) {
-        try {
-          // For large files, only transcribe the selected portions
-          if (mediaBlob.size > 50 * 1024 * 1024) {
-            // Skip detailed transcription for very large files
-            toast.success('Captions skipped for large file - add manually');
-          } else {
-            // Create a blob from selected segments for transcription
-            const captions = await transcribeAudio(mediaBlob);
-
-            // Adjust caption timing to match short timeline - batch for performance
-            const adjustedCaptions: Array<Parameters<typeof addCaption>[0]> = [];
-
-            captions.forEach((caption) => {
-              // Find which clip this caption belongs to
-              selectedClips.forEach((clip, index) => {
-                if (caption.startTime >= clip.start && caption.startTime < clip.end) {
-                  // Adjust to short timeline
-                  const offsetInClip = caption.startTime - clip.start;
-                  let shortStartTime = 0;
-                  for (let i = 0; i < index; i++) {
-                    shortStartTime += selectedClips[i].end - selectedClips[i].start;
-                  }
-                  shortStartTime += offsetInClip;
-
-                  adjustedCaptions.push({
-                    ...caption,
-                    id: uuidv4(),
-                    startTime: shortStartTime,
-                    endTime: shortStartTime + (caption.endTime - caption.startTime),
-                  });
-                }
-              });
-            });
-
-            // Add captions in batches to prevent UI freeze
-            for (let i = 0; i < adjustedCaptions.length; i++) {
-              addCaption(adjustedCaptions[i]);
-              if (i % 5 === 0) {
-                await new Promise((resolve) => setTimeout(resolve, 0));
-              }
-            }
-          }
-        } catch (err) {
-          console.warn('Caption generation failed:', err);
-        }
+        toast.success('Auto-captions available via Captions panel');
       }
 
       setProcessingProgress(85);
@@ -279,8 +189,6 @@ export function ShortifyDialog() {
           duration: Math.max(project.duration, timelinePosition),
         });
       }
-
-      await audioContext.close();
 
       setProcessingProgress(100);
       toast.success(
