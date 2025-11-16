@@ -1,6 +1,8 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
-const isDev = process.env.NODE_ENV !== 'production';
+
+// Better detection: check if running from asar (packaged) or not
+const isDev = !app.isPackaged;
 
 let mainWindow;
 
@@ -15,8 +17,7 @@ function createWindow() {
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
     },
-    icon: path.join(__dirname, '../public/icon.png'),
-    titleBarStyle: 'hiddenInset',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     show: false,
   });
 
@@ -25,7 +26,13 @@ function createWindow() {
     mainWindow.loadURL('http://localhost:5173');
     mainWindow.webContents.openDevTools();
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    // In production, load from the dist folder
+    const indexPath = path.join(__dirname, '../dist/index.html');
+    mainWindow.loadFile(indexPath).catch((err) => {
+      console.error('Failed to load index.html:', err);
+      // Fallback: try relative path
+      mainWindow.loadFile(path.join(app.getAppPath(), 'dist/index.html'));
+    });
   }
 
   // Show window when ready

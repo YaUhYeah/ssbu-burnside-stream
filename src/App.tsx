@@ -10,10 +10,14 @@ import { SettingsDialog } from '@/components/dialogs/SettingsDialog';
 import { ShortifyDialog } from '@/components/dialogs/ShortifyDialog';
 import { OnboardingOverlay } from '@/components/OnboardingOverlay';
 import { ProcessingOverlay } from '@/components/ProcessingOverlay';
+import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 
 export function App() {
   const { preferences, showNewProjectDialog, showExportDialog, showSettingsDialog, showShortifyDialog, isProcessing } = useUIStore();
   const { project } = useProjectStore();
+
+  // Global keyboard shortcuts
+  useKeyboardShortcuts();
 
   useEffect(() => {
     // Apply theme
@@ -32,48 +36,6 @@ export function App() {
       }
     }
   }, [preferences.theme]);
-
-  useEffect(() => {
-    // Keyboard shortcuts
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Prevent shortcuts when typing in inputs
-      if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement
-      ) {
-        return;
-      }
-
-      const { togglePlay, undo, redo, seekForward, seekBackward } = useProjectStore.getState();
-      const { setShowExportDialog, setShowSettingsDialog } = useUIStore.getState();
-
-      if (e.code === 'Space') {
-        e.preventDefault();
-        togglePlay();
-      } else if (e.ctrlKey && e.code === 'KeyZ' && !e.shiftKey) {
-        e.preventDefault();
-        undo();
-      } else if (e.ctrlKey && e.shiftKey && e.code === 'KeyZ') {
-        e.preventDefault();
-        redo();
-      } else if (e.ctrlKey && e.code === 'KeyE') {
-        e.preventDefault();
-        setShowExportDialog(true);
-      } else if (e.ctrlKey && e.code === 'Comma') {
-        e.preventDefault();
-        setShowSettingsDialog(true);
-      } else if (e.code === 'ArrowRight') {
-        e.preventDefault();
-        seekForward(e.shiftKey ? 10 : 1);
-      } else if (e.code === 'ArrowLeft') {
-        e.preventDefault();
-        seekBackward(e.shiftKey ? 10 : 1);
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-background text-foreground">
