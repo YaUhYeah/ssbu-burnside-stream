@@ -14,7 +14,7 @@ import {
 import { useUIStore } from '@/stores/uiStore';
 import { useProjectStore } from '@/stores/projectStore';
 import { cn, formatFileSize, formatDuration, getMediaType } from '@/lib/utils';
-import type { MediaFile } from '@/types';
+import type { MediaFile, AspectRatio, EffectType, TransitionType, Effect, Transition } from '@/types';
 import toast from 'react-hot-toast';
 import { ResolutionMatchDialog } from './dialogs/ResolutionMatchDialog';
 
@@ -407,45 +407,188 @@ function MediaPanel({ isDragActive, getRootProps, getInputProps }: MediaPanelPro
 }
 
 function EffectsPanel() {
+  const { project, selectedClipIds, updateClip } = useProjectStore();
+  const [draggingEffect, setDraggingEffect] = useState<string | null>(null);
+
   const effects = [
-    { id: 'brightness', name: 'Brightness', icon: '☀️' },
-    { id: 'contrast', name: 'Contrast', icon: '◐' },
-    { id: 'saturation', name: 'Saturation', icon: '🎨' },
-    { id: 'blur', name: 'Blur', icon: '💨' },
-    { id: 'sharpen', name: 'Sharpen', icon: '🔍' },
-    { id: 'noise-reduction', name: 'Noise Reduction', icon: '🔇' },
-    { id: 'color-correction', name: 'Color Correction', icon: '🌈' },
-    { id: 'stabilize', name: 'Stabilize', icon: '📐' },
+    { id: 'brightness', name: 'Brightness', icon: '☀️', value: 1.2 },
+    { id: 'contrast', name: 'Contrast', icon: '◐', value: 1.3 },
+    { id: 'saturation', name: 'Saturation', icon: '🎨', value: 1.5 },
+    { id: 'blur', name: 'Blur', icon: '💨', value: 2 },
+    { id: 'sharpen', name: 'Sharpen', icon: '🔍', value: 1.5 },
+    { id: 'grayscale', name: 'Grayscale', icon: '⚫', value: 1 },
+    { id: 'sepia', name: 'Sepia', icon: '🟤', value: 0.8 },
+    { id: 'invert', name: 'Invert', icon: '🔄', value: 1 },
+    { id: 'vignette', name: 'Vignette', icon: '🎯', value: 0.5 },
+    { id: 'chromatic', name: 'Chromatic', icon: '🌈', value: 3 },
+    { id: 'noise', name: 'Film Grain', icon: '📺', value: 0.1 },
+    { id: 'glow', name: 'Glow', icon: '✨', value: 10 },
+    { id: 'chroma-key', name: 'Chroma Key', icon: '🟩', value: 0.4 },
   ];
+
+  const transitions = [
+    { id: 'fade', name: 'Fade', icon: '🌅', duration: 0.5 },
+    { id: 'dissolve', name: 'Dissolve', icon: '💫', duration: 0.8 },
+    { id: 'wipe-left', name: 'Wipe Left', icon: '👈', duration: 0.6 },
+    { id: 'wipe-right', name: 'Wipe Right', icon: '👉', duration: 0.6 },
+    { id: 'wipe-up', name: 'Wipe Up', icon: '👆', duration: 0.6 },
+    { id: 'wipe-down', name: 'Wipe Down', icon: '👇', duration: 0.6 },
+    { id: 'slide-left', name: 'Slide Left', icon: '⬅️', duration: 0.5 },
+    { id: 'slide-right', name: 'Slide Right', icon: '➡️', duration: 0.5 },
+    { id: 'zoom-in', name: 'Zoom In', icon: '🔎', duration: 0.7 },
+    { id: 'zoom-out', name: 'Zoom Out', icon: '🔍', duration: 0.7 },
+    { id: 'spin', name: 'Spin', icon: '🔄', duration: 0.8 },
+    { id: 'whip', name: 'Whip Pan', icon: '💨', duration: 0.3 },
+    { id: 'glitch', name: 'Glitch', icon: '📺', duration: 0.4 },
+    { id: 'flash', name: 'Flash', icon: '⚡', duration: 0.2 },
+  ];
+
+  const applyEffectToSelected = (effectType: EffectType, value: number) => {
+    if (selectedClipIds.length === 0) {
+      toast.error('Select a clip first');
+      return;
+    }
+
+    if (!project) return;
+
+    let applied = 0;
+    for (const clipId of selectedClipIds) {
+      for (const track of project.tracks) {
+        const clip = track.clips.find((c) => c.id === clipId);
+        if (clip) {
+          const existingEffects = clip.effects || [];
+          const newEffect: Effect = {
+            id: uuidv4(),
+            type: effectType,
+            params: { value, enabled: true },
+          };
+          updateClip(track.id, clipId, {
+            effects: [...existingEffects.filter((e) => e.type !== effectType), newEffect],
+          });
+          applied++;
+          break;
+        }
+      }
+    }
+
+    if (applied > 0) {
+      toast.success(`Applied ${effectType} to ${applied} clip${applied > 1 ? 's' : ''}`);
+    }
+  };
+
+  const applyTransitionToSelected = (transitionType: TransitionType, duration: number) => {
+    if (selectedClipIds.length === 0) {
+      toast.error('Select a clip first');
+      return;
+    }
+
+    if (!project) return;
+
+    let applied = 0;
+    for (const clipId of selectedClipIds) {
+      for (const track of project.tracks) {
+        const clip = track.clips.find((c) => c.id === clipId);
+        if (clip) {
+          const newTransition: Transition = {
+            id: uuidv4(),
+            type: transitionType,
+            duration,
+            position: 'end',
+            params: {},
+          };
+          updateClip(track.id, clipId, {
+            transitions: [newTransition],
+          });
+          applied++;
+          break;
+        }
+      }
+    }
+
+    if (applied > 0) {
+      toast.success(`Applied ${transitionType} transition to ${applied} clip${applied > 1 ? 's' : ''}`);
+    }
+  };
+
+  const handleDragStart = (e: React.DragEvent, type: string, id: string) => {
+    e.dataTransfer.setData('application/effect-type', type);
+    e.dataTransfer.setData('application/effect-id', id);
+    e.dataTransfer.effectAllowed = 'copy';
+    setDraggingEffect(id);
+  };
+
+  const handleDragEnd = () => {
+    setDraggingEffect(null);
+  };
 
   return (
     <div className="space-y-4">
-      <h3 className="text-sm font-semibold">Effects</h3>
-      <div className="grid grid-cols-2 gap-2">
-        {effects.map((effect) => (
-          <button
-            key={effect.id}
-            className="flex flex-col items-center gap-2 rounded-md bg-muted/50 p-3 text-xs hover:bg-muted"
-            onClick={() => toast('Drag effect to clip on timeline')}
-          >
-            <span className="text-xl">{effect.icon}</span>
-            <span>{effect.name}</span>
-          </button>
-        ))}
+      <div>
+        <h3 className="text-sm font-semibold mb-2">Video Effects</h3>
+        <p className="text-xs text-muted-foreground mb-3">
+          Click to apply to selected clip{selectedClipIds.length > 0 ? ` (${selectedClipIds.length} selected)` : ''}
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          {effects.map((effect) => (
+            <button
+              key={effect.id}
+              draggable
+              onDragStart={(e) => handleDragStart(e, 'effect', effect.id)}
+              onDragEnd={handleDragEnd}
+              onClick={() => applyEffectToSelected(effect.id as EffectType, effect.value)}
+              className={cn(
+                'flex flex-col items-center gap-2 rounded-md bg-muted/50 p-3 text-xs transition-all cursor-grab active:cursor-grabbing',
+                draggingEffect === effect.id
+                  ? 'ring-2 ring-primary opacity-50 scale-95'
+                  : 'hover:bg-muted hover:scale-105',
+                selectedClipIds.length > 0 && 'hover:ring-2 hover:ring-primary/50'
+              )}
+            >
+              <span className="text-xl">{effect.icon}</span>
+              <span className="font-medium">{effect.name}</span>
+            </button>
+          ))}
+        </div>
       </div>
 
-      <h3 className="text-sm font-semibold">Transitions</h3>
-      <div className="grid grid-cols-2 gap-2">
-        {['Fade', 'Dissolve', 'Wipe', 'Slide', 'Zoom', 'Whip'].map((transition) => (
-          <button
-            key={transition}
-            className="rounded-md bg-muted/50 p-2 text-xs hover:bg-muted"
-            onClick={() => toast('Drag transition between clips')}
-          >
-            {transition}
-          </button>
-        ))}
+      <div>
+        <h3 className="text-sm font-semibold mb-2">Transitions</h3>
+        <p className="text-xs text-muted-foreground mb-3">
+          Click to add transition to selected clip
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          {transitions.map((transition) => (
+            <button
+              key={transition.id}
+              draggable
+              onDragStart={(e) => handleDragStart(e, 'transition', transition.id)}
+              onDragEnd={handleDragEnd}
+              onClick={() => applyTransitionToSelected(transition.id as TransitionType, transition.duration)}
+              className={cn(
+                'flex items-center gap-2 rounded-md bg-muted/50 p-2 text-xs transition-all cursor-grab active:cursor-grabbing',
+                draggingEffect === transition.id
+                  ? 'ring-2 ring-primary opacity-50 scale-95'
+                  : 'hover:bg-muted hover:scale-105',
+                selectedClipIds.length > 0 && 'hover:ring-2 hover:ring-primary/50'
+              )}
+            >
+              <span>{transition.icon}</span>
+              <span className="font-medium">{transition.name}</span>
+            </button>
+          ))}
+        </div>
       </div>
+
+      {selectedClipIds.length > 0 && (
+        <div className="rounded-md bg-primary/10 p-3 text-xs">
+          <p className="font-medium text-primary">
+            {selectedClipIds.length} clip{selectedClipIds.length > 1 ? 's' : ''} selected
+          </p>
+          <p className="text-muted-foreground mt-1">
+            Click any effect or transition to apply it
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -527,29 +670,151 @@ function CaptionsPanel() {
 }
 
 function TemplatesPanel() {
+  const { project, updateProject } = useProjectStore();
+
   const templates = [
-    { id: 'gaming-highlight', name: 'Gaming Highlight', category: 'Gaming', duration: 30 },
-    { id: 'vlog-intro', name: 'Vlog Intro', category: 'Vlog', duration: 15 },
-    { id: 'product-showcase', name: 'Product Showcase', category: 'Product', duration: 60 },
-    { id: 'tutorial-chapter', name: 'Tutorial Chapter', category: 'Tutorial', duration: 120 },
-    { id: 'trending-hook', name: 'Trending Hook', category: 'Trending', duration: 10 },
-    { id: 'podcast-clip', name: 'Podcast Clip', category: 'Podcast', duration: 45 },
+    {
+      id: 'gaming-highlight',
+      name: 'Gaming Highlight',
+      category: 'Gaming',
+      duration: 30,
+      description: 'Fast-paced cuts with zoom transitions',
+      aspectRatio: '16:9' as AspectRatio,
+      effects: ['contrast', 'saturation'],
+      transitions: ['zoom-in', 'whip'],
+    },
+    {
+      id: 'vlog-intro',
+      name: 'Vlog Intro',
+      category: 'Vlog',
+      duration: 15,
+      description: 'Smooth fades with warm color grading',
+      aspectRatio: '16:9' as AspectRatio,
+      effects: ['brightness', 'sepia'],
+      transitions: ['fade', 'dissolve'],
+    },
+    {
+      id: 'product-showcase',
+      name: 'Product Showcase',
+      category: 'Product',
+      duration: 60,
+      description: 'Clean slides with professional look',
+      aspectRatio: '16:9' as AspectRatio,
+      effects: ['sharpen', 'contrast'],
+      transitions: ['slide-left', 'slide-right'],
+    },
+    {
+      id: 'tiktok-vertical',
+      name: 'TikTok Vertical',
+      category: 'Social',
+      duration: 30,
+      description: 'Vertical 9:16 with trendy effects',
+      aspectRatio: '9:16' as AspectRatio,
+      effects: ['chromatic', 'vignette'],
+      transitions: ['glitch', 'flash'],
+    },
+    {
+      id: 'instagram-square',
+      name: 'Instagram Square',
+      category: 'Social',
+      duration: 15,
+      description: 'Square format with vibrant colors',
+      aspectRatio: '1:1' as AspectRatio,
+      effects: ['saturation', 'glow'],
+      transitions: ['fade', 'zoom-out'],
+    },
+    {
+      id: 'cinematic-widescreen',
+      name: 'Cinematic Widescreen',
+      category: 'Film',
+      duration: 120,
+      description: 'Movie-style with letterbox',
+      aspectRatio: '16:9' as AspectRatio,
+      effects: ['contrast', 'vignette', 'grayscale'],
+      transitions: ['dissolve', 'fade'],
+    },
+    {
+      id: 'tutorial-chapter',
+      name: 'Tutorial Chapter',
+      category: 'Tutorial',
+      duration: 120,
+      description: 'Clean cuts with focus on clarity',
+      aspectRatio: '16:9' as AspectRatio,
+      effects: ['sharpen', 'brightness'],
+      transitions: ['wipe-left', 'wipe-right'],
+    },
+    {
+      id: 'podcast-clip',
+      name: 'Podcast Clip',
+      category: 'Podcast',
+      duration: 45,
+      description: 'Audio-focused with subtle visuals',
+      aspectRatio: '1:1' as AspectRatio,
+      effects: ['noise', 'sepia'],
+      transitions: ['fade', 'dissolve'],
+    },
   ];
+
+  const applyTemplate = (template: typeof templates[0]) => {
+    if (!project) {
+      toast.error('Create a project first');
+      return;
+    }
+
+    const resolutions: Record<AspectRatio, { width: number; height: number; label: string }> = {
+      '16:9': { width: 1920, height: 1080, label: '1080p' },
+      '9:16': { width: 1080, height: 1920, label: '1080p Vertical' },
+      '1:1': { width: 1080, height: 1080, label: '1080x1080' },
+      '4:5': { width: 1080, height: 1350, label: '1080x1350' },
+      '4:3': { width: 1440, height: 1080, label: '1440x1080' },
+    };
+
+    updateProject({
+      aspectRatio: template.aspectRatio,
+      resolution: resolutions[template.aspectRatio],
+      settings: {
+        ...project.settings,
+        defaultTransitionDuration: template.transitions.length > 0 ? 0.5 : 0,
+      },
+    });
+
+    toast.success(
+      `Applied "${template.name}" template - ${template.aspectRatio} format with ${template.effects.join(', ')} effects`
+    );
+  };
 
   return (
     <div className="space-y-4">
-      <h3 className="text-sm font-semibold">Templates</h3>
+      <h3 className="text-sm font-semibold">Project Templates</h3>
+      <p className="text-xs text-muted-foreground">
+        Apply preset configurations to your project
+      </p>
       <div className="space-y-2">
         {templates.map((template) => (
           <button
             key={template.id}
-            className="w-full rounded-md bg-muted/50 p-3 text-left hover:bg-muted"
-            onClick={() => toast('Template applied')}
+            className="w-full rounded-md bg-muted/50 p-3 text-left hover:bg-muted transition-colors group"
+            onClick={() => applyTemplate(template)}
           >
-            <p className="text-sm font-medium">{template.name}</p>
-            <p className="text-xs text-muted-foreground">
-              {template.category} • {template.duration}s
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium group-hover:text-primary transition-colors">
+                {template.name}
+              </p>
+              <span className="text-xs bg-primary/20 text-primary px-2 py-0.5 rounded">
+                {template.aspectRatio}
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {template.description}
             </p>
+            <div className="flex items-center gap-2 mt-2">
+              <span className="text-xs bg-muted px-1.5 py-0.5 rounded">
+                {template.category}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                {template.duration}s
+              </span>
+            </div>
           </button>
         ))}
       </div>

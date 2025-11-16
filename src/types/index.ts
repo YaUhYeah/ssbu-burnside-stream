@@ -62,7 +62,15 @@ export type EffectType =
   | 'flip'
   | 'stabilize'
   | 'speed'
-  | 'reverse';
+  | 'reverse'
+  | 'grayscale'
+  | 'sepia'
+  | 'invert'
+  | 'vignette'
+  | 'chromatic'
+  | 'noise'
+  | 'glow'
+  | 'chroma-key';
 
 export interface Transition {
   id: string;
@@ -77,10 +85,20 @@ export type TransitionType =
   | 'crossfade'
   | 'dissolve'
   | 'wipe'
+  | 'wipe-left'
+  | 'wipe-right'
+  | 'wipe-up'
+  | 'wipe-down'
   | 'slide'
+  | 'slide-left'
+  | 'slide-right'
   | 'zoom'
+  | 'zoom-in'
+  | 'zoom-out'
+  | 'spin'
   | 'whip'
-  | 'glitch';
+  | 'glitch'
+  | 'flash';
 
 export interface Keyframe {
   time: number;

@@ -23,6 +23,7 @@ interface ProjectState {
   undoStack: Project[];
   redoStack: Project[];
   isDirty: boolean;
+  clipboard: TimelineClip[];
 }
 
 interface ProjectActions {
@@ -58,6 +59,11 @@ interface ProjectActions {
   selectClip: (clipId: string, multi?: boolean) => void;
   deselectAllClips: () => void;
   selectTrack: (trackId: string) => void;
+
+  // Clipboard
+  copySelectedClips: () => void;
+  pasteClips: () => void;
+  deleteSelectedClips: () => void;
 
   // Playback
   setCurrentTime: (time: number) => void;
@@ -153,6 +159,7 @@ export const useProjectStore = create<ProjectState & ProjectActions>()(
       undoStack: [],
       redoStack: [],
       isDirty: false,
+      clipboard: [],
 
       // Actions
       createProject: (name, aspectRatio) => {
@@ -469,6 +476,104 @@ export const useProjectStore = create<ProjectState & ProjectActions>()(
       selectTrack: (trackId) => {
         set((state) => {
           state.selectedTrackId = trackId;
+        });
+      },
+
+      copySelectedClips: () => {
+        const { project, selectedClipIds } = get();
+        if (!project || selectedClipIds.length === 0) return;
+
+        const clipsToCopy: TimelineClip[] = [];
+        for (const clipId of selectedClipIds) {
+          for (const track of project.tracks) {
+            const clip = track.clips.find((c) => c.id === clipId);
+            if (clip) {
+              clipsToCopy.push({ ...clip });
+              break;
+            }
+          }
+        }
+
+        set((state) => {
+          state.clipboard = clipsToCopy;
+        });
+      },
+
+      pasteClips: () => {
+        const { project, clipboard, currentTime } = get();
+        if (!project || clipboard.length === 0) return;
+
+        get().pushToUndoStack();
+
+        // Sort clips by start time to maintain relative positions
+        const sortedClips = [...clipboard].sort((a, b) => a.startTime - b.startTime);
+        const firstClipStart = sortedClips[0].startTime;
+        const offset = currentTime - firstClipStart;
+
+        set((state) => {
+          if (!state.project) return;
+
+          const newClipIds: string[] = [];
+
+          for (const clipData of sortedClips) {
+            // Find appropriate track for paste
+            const targetTrack = state.project.tracks.find((t) => t.id === clipData.trackId) ||
+              state.project.tracks[0];
+
+            if (targetTrack) {
+              const newClip: TimelineClip = {
+                ...clipData,
+                id: uuidv4(),
+                trackId: targetTrack.id,
+                startTime: clipData.startTime + offset,
+              };
+              targetTrack.clips.push(newClip);
+              newClipIds.push(newClip.id);
+            }
+          }
+
+          state.selectedClipIds = newClipIds;
+          state.isDirty = true;
+        });
+
+        // Update duration
+        const duration = get().calculateDuration();
+        set((state) => {
+          if (state.project) {
+            state.project.duration = duration;
+          }
+        });
+      },
+
+      deleteSelectedClips: () => {
+        const { project, selectedClipIds } = get();
+        if (!project || selectedClipIds.length === 0) return;
+
+        get().pushToUndoStack();
+
+        set((state) => {
+          if (!state.project) return;
+
+          for (const clipId of selectedClipIds) {
+            for (const track of state.project.tracks) {
+              const clipIndex = track.clips.findIndex((c) => c.id === clipId);
+              if (clipIndex !== -1) {
+                track.clips.splice(clipIndex, 1);
+                break;
+              }
+            }
+          }
+
+          state.selectedClipIds = [];
+          state.isDirty = true;
+        });
+
+        // Update duration
+        const duration = get().calculateDuration();
+        set((state) => {
+          if (state.project) {
+            state.project.duration = duration;
+          }
         });
       },
 

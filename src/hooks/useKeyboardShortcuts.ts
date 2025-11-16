@@ -14,6 +14,11 @@ export function useKeyboardShortcuts() {
     redo,
     undoStack,
     redoStack,
+    selectedClipIds,
+    copySelectedClips,
+    pasteClips,
+    deleteSelectedClips,
+    clipboard,
   } = useProjectStore();
 
   const { setShowExportDialog, setShowNewProjectDialog, setShowShortifyDialog, setShowSettingsDialog } = useUIStore();
@@ -35,6 +40,28 @@ export function useKeyboardShortcuts() {
       if (e.key === ' ' && !isMod) {
         e.preventDefault();
         togglePlay();
+      }
+
+      // Copy selected clips
+      if (isMod && e.key === 'c' && selectedClipIds.length > 0) {
+        e.preventDefault();
+        copySelectedClips();
+        toast.success(`Copied ${selectedClipIds.length} clip${selectedClipIds.length > 1 ? 's' : ''}`);
+      }
+
+      // Paste clips
+      if (isMod && e.key === 'v' && clipboard.length > 0) {
+        e.preventDefault();
+        pasteClips();
+        toast.success(`Pasted ${clipboard.length} clip${clipboard.length > 1 ? 's' : ''}`);
+      }
+
+      // Delete selected clips
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedClipIds.length > 0) {
+        e.preventDefault();
+        const count = selectedClipIds.length;
+        deleteSelectedClips();
+        toast.success(`Deleted ${count} clip${count > 1 ? 's' : ''}`);
       }
 
       // Seek controls
@@ -137,6 +164,11 @@ export function useKeyboardShortcuts() {
     redo,
     undoStack,
     redoStack,
+    selectedClipIds,
+    copySelectedClips,
+    pasteClips,
+    deleteSelectedClips,
+    clipboard,
     setShowExportDialog,
     setShowNewProjectDialog,
     setShowShortifyDialog,
