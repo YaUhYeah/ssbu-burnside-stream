@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { X, Download, Check } from 'lucide-react';
+import { X, Download, Check, FolderOpen, FileText } from 'lucide-react';
 import { useUIStore } from '@/stores/uiStore';
 import { useProjectStore } from '@/stores/projectStore';
 import type { ExportPreset } from '@/types';
 import toast from 'react-hot-toast';
+import { exportVideo, downloadVideo } from '@/utils/videoExport';
 
 const EXPORT_PRESETS: ExportPreset[] = [
   {
@@ -94,6 +95,8 @@ export function ExportDialog() {
   const [includeAudio, setIncludeAudio] = useState(true);
   const [includeCaptions, setIncludeCaptions] = useState(true);
   const [qualityLevel, setQualityLevel] = useState<'draft' | 'standard' | 'high' | 'ultra'>('high');
+  const [fileName, setFileName] = useState(project?.name || 'export');
+  const [outputPath, setOutputPath] = useState('Downloads');
 
   const qualityMultiplier = {
     draft: 0.5,
@@ -102,20 +105,60 @@ export function ExportDialog() {
     ultra: 2,
   };
 
+  const handleSelectFolder = async () => {
+    // Use File System Access API if available
+    if ('showDirectoryPicker' in window) {
+      try {
+        const dirHandle = await (window as unknown as { showDirectoryPicker: () => Promise<{ name: string }> }).showDirectoryPicker();
+        setOutputPath(dirHandle.name);
+        toast.success(`Selected folder: ${dirHandle.name}`);
+      } catch (err) {
+        // User cancelled or API not supported
+        console.log('Folder selection cancelled or not supported');
+      }
+    } else {
+      toast.error('Folder selection not supported in this browser. File will download to default location.');
+    }
+  };
+
   const handleExport = async () => {
     if (!project) return;
 
+    const preset = EXPORT_PRESETS.find((p) => p.id === selectedPreset);
+    if (!preset) return;
+
+    // Validate filename
+    const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9_-]/g, '_') || 'export';
+
+    // Get proper extension based on MIME type support
+    const extension = MediaRecorder.isTypeSupported('video/mp4') ? 'mp4' : 'webm';
+    const fullFileName = `${sanitizedFileName}.${extension}`;
+
     setShowExportDialog(false);
-    setProcessing(true, 'Exporting video...');
+    setProcessing(true, `Exporting ${fullFileName}...`);
 
-    // Simulate export process
-    for (let i = 0; i <= 100; i += 2) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      setProcessingProgress(i);
+    try {
+      // Perform real export
+      const blob = await exportVideo({
+        project,
+        preset,
+        fileName: fullFileName,
+        includeAudio,
+        includeCaptions,
+        qualityMultiplier: qualityMultiplier[qualityLevel],
+        onProgress: setProcessingProgress,
+      });
+
+      // Download the file
+      downloadVideo(blob, fullFileName);
+
+      setProcessing(false);
+      toast.success(`Video exported as "${fullFileName}" (${(blob.size / 1024 / 1024).toFixed(2)} MB)`);
+    } catch (err) {
+      setProcessing(false);
+      console.error('Export failed:', err);
+      toast.error(`Export failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
-
-    setProcessing(false);
-    toast.success('Video exported successfully!');
   };
 
   const preset = EXPORT_PRESETS.find((p) => p.id === selectedPreset);
@@ -134,6 +177,48 @@ export function ExportDialog() {
         </div>
 
         <div className="space-y-6">
+          {/* File name and location */}
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div>
+              <label className="mb-2 block text-sm font-medium">
+                File Name
+              </label>
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <FileText className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    type="text"
+                    value={fileName}
+                    onChange={(e) => setFileName(e.target.value)}
+                    placeholder="Enter file name"
+                    className="w-full rounded-md border border-input bg-background py-2 pl-10 pr-3 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                </div>
+                <span className="text-sm text-muted-foreground">
+                  .{preset?.format || 'mp4'}
+                </span>
+              </div>
+            </div>
+            <div>
+              <label className="mb-2 block text-sm font-medium">
+                Save Location
+              </label>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 rounded-md border border-input bg-muted/50 px-3 py-2 text-sm">
+                  {outputPath}
+                </div>
+                <button
+                  onClick={handleSelectFolder}
+                  className="flex items-center gap-1 rounded-md border border-input px-3 py-2 text-sm hover:bg-accent"
+                  title="Select folder"
+                >
+                  <FolderOpen className="h-4 w-4" />
+                  Browse
+                </button>
+              </div>
+            </div>
+          </div>
+
           {/* Platform presets */}
           <div>
             <label className="mb-2 block text-sm font-medium">

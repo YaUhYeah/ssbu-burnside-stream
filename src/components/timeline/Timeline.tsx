@@ -22,6 +22,15 @@ export function Timeline({ simplified = false }: TimelineProps) {
   const [, setPendingDrag] = useState(false);
   const [, setDragThresholdMet] = useState(false);
 
+  // Marquee selection state
+  const [marqueeSelection, setMarqueeSelection] = useState<{
+    startX: number;
+    startY: number;
+    currentX: number;
+    currentY: number;
+    active: boolean;
+  } | null>(null);
+
   // Use refs for values that need to be current in event handlers
   const dragStateRef = useRef({
     dragClipId: null as string | null,
@@ -32,6 +41,14 @@ export function Timeline({ simplified = false }: TimelineProps) {
     isResizing: false,
     resizeEdge: null as 'left' | 'right' | null,
     dragThresholdMet: false,
+  });
+
+  const marqueeRef = useRef({
+    active: false,
+    startX: 0,
+    startY: 0,
+    currentX: 0,
+    currentY: 0,
   });
 
   const {
@@ -114,7 +131,7 @@ export function Timeline({ simplified = false }: TimelineProps) {
 
   // Handle click on timeline to set playhead
   const handleTimelineClick = (e: React.MouseEvent) => {
-    if (!timelineRef.current || isDragging) return;
+    if (!timelineRef.current || isDragging || marqueeRef.current.active) return;
 
     const rect = timelineRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left + scrollPosition;
@@ -122,11 +139,38 @@ export function Timeline({ simplified = false }: TimelineProps) {
 
     setCurrentTime(Math.max(0, time));
 
-    // Visual feedback for deselection if clips were selected
+    // Deselect clips when clicking on empty timeline area
     if (selectedClipIds.length > 0) {
       deselectAllClips();
-      toast('Clips deselected', { duration: 800, icon: '✗' });
     }
+  };
+
+  // Handle marquee selection start
+  const handleTimelineMouseDown = (e: React.MouseEvent) => {
+    if (!timelineRef.current) return;
+
+    // Only start marquee on left click and not on a clip
+    if (e.button !== 0) return;
+
+    const rect = timelineRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left + scrollPosition;
+    const y = e.clientY - rect.top;
+
+    marqueeRef.current = {
+      active: true,
+      startX: x,
+      startY: y,
+      currentX: x,
+      currentY: y,
+    };
+
+    setMarqueeSelection({
+      startX: x,
+      startY: y,
+      currentX: x,
+      currentY: y,
+      active: true,
+    });
   };
 
   // Handle clip drag
@@ -138,13 +182,7 @@ export function Timeline({ simplified = false }: TimelineProps) {
   ) => {
     e.stopPropagation();
     // Select immediately on click (don't require drag)
-    const wasSelected = selectedClipIds.includes(clipId);
     selectClip(clipId, e.ctrlKey || e.metaKey);
-
-    // Visual feedback for selection
-    if (!wasSelected) {
-      toast.success('Clip selected', { duration: 1000, icon: '✓' });
-    }
 
     // Set up potential drag (only start actual drag after threshold)
     // Update both state and ref
@@ -166,6 +204,25 @@ export function Timeline({ simplified = false }: TimelineProps) {
   // Use a stable event handler that reads from refs
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
+      // Handle marquee selection
+      if (marqueeRef.current.active && timelineRef.current) {
+        const rect = timelineRef.current.getBoundingClientRect();
+        const x = e.clientX - rect.left + scrollPosition;
+        const y = e.clientY - rect.top;
+
+        marqueeRef.current.currentX = x;
+        marqueeRef.current.currentY = y;
+
+        setMarqueeSelection({
+          startX: marqueeRef.current.startX,
+          startY: marqueeRef.current.startY,
+          currentX: x,
+          currentY: y,
+          active: true,
+        });
+        return;
+      }
+
       const state = dragStateRef.current;
       if (!state.dragClipId || !project) return;
 
@@ -237,6 +294,64 @@ export function Timeline({ simplified = false }: TimelineProps) {
     };
 
     const handleMouseUp = () => {
+      // Finalize marquee selection
+      if (marqueeRef.current.active) {
+        const minX = Math.min(marqueeRef.current.startX, marqueeRef.current.currentX);
+        const maxX = Math.max(marqueeRef.current.startX, marqueeRef.current.currentX);
+        const minY = Math.min(marqueeRef.current.startY, marqueeRef.current.currentY);
+        const maxY = Math.max(marqueeRef.current.startY, marqueeRef.current.currentY);
+
+        // Only select if marquee has some size (avoid accidental clicks)
+        const width = maxX - minX;
+        const height = maxY - minY;
+
+        if (width > 5 || height > 5) {
+          // Calculate which clips are in the marquee
+          const clipIds: string[] = [];
+          let trackY = 24; // Start after ruler height
+
+          if (project) {
+            project.tracks.forEach((track) => {
+              const trackTop = trackY;
+              const trackBottom = trackY + track.height;
+
+              // Check if marquee overlaps with track vertically
+              if (minY <= trackBottom && maxY >= trackTop) {
+                track.clips.forEach((clip) => {
+                  const clipLeft = timeToPixels(clip.startTime, zoom, pixelsPerSecond);
+                  const clipRight = timeToPixels(clip.startTime + clip.duration, zoom, pixelsPerSecond);
+
+                  // Check if marquee overlaps with clip horizontally
+                  if (minX <= clipRight && maxX >= clipLeft) {
+                    clipIds.push(clip.id);
+                  }
+                });
+              }
+
+              trackY += track.height;
+            });
+          }
+
+          // Select all clips in marquee
+          if (clipIds.length > 0) {
+            deselectAllClips();
+            clipIds.forEach((id, index) => {
+              selectClip(id, index > 0); // Add to selection for all but first
+            });
+            toast.success(`Selected ${clipIds.length} clip${clipIds.length > 1 ? 's' : ''}`);
+          }
+        }
+
+        marqueeRef.current = {
+          active: false,
+          startX: 0,
+          startY: 0,
+          currentX: 0,
+          currentY: 0,
+        };
+        setMarqueeSelection(null);
+      }
+
       dragStateRef.current = {
         dragClipId: null,
         dragStartX: 0,
@@ -264,7 +379,7 @@ export function Timeline({ simplified = false }: TimelineProps) {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [project, zoom, snapToNearestPoint, updateClip]);
+  }, [project, zoom, snapToNearestPoint, updateClip, scrollPosition, selectClip, deselectAllClips]);
 
   // Handle clip resize
   const handleResizeMouseDown = (
@@ -274,9 +389,6 @@ export function Timeline({ simplified = false }: TimelineProps) {
     clipTime: number
   ) => {
     e.stopPropagation();
-
-    // Visual feedback for resize start
-    toast('Resizing clip...', { duration: 1000, icon: '↔️' });
 
     // Update both state and ref for consistency
     dragStateRef.current = {
@@ -447,7 +559,7 @@ export function Timeline({ simplified = false }: TimelineProps) {
               if (containerRef.current && project.duration > 0) {
                 const viewWidth = containerRef.current.clientWidth - 48; // account for headers
                 const newZoom = viewWidth / (project.duration * pixelsPerSecond);
-                setZoom(Math.max(0.1, Math.min(10, newZoom)));
+                setZoom(Math.max(0.01, Math.min(10, newZoom)));
               }
             }}
             className="rounded p-1 hover:bg-accent"
@@ -464,7 +576,7 @@ export function Timeline({ simplified = false }: TimelineProps) {
           </button>
           <div className="mx-1 h-6 w-px bg-border" />
           <button
-            onClick={() => setZoom(Math.max(0.1, zoom - 0.2))}
+            onClick={() => setZoom(Math.max(0.01, zoom - 0.2))}
             className="rounded p-1 hover:bg-accent"
             title="Zoom out"
           >
@@ -472,7 +584,7 @@ export function Timeline({ simplified = false }: TimelineProps) {
           </button>
           <input
             type="range"
-            min="10"
+            min="1"
             max="500"
             value={zoom * 100}
             onChange={(e) => setZoom(parseInt(e.target.value) / 100)}
@@ -571,6 +683,7 @@ export function Timeline({ simplified = false }: TimelineProps) {
             ref={timelineRef}
             className="relative"
             style={{ width: timelineWidth }}
+            onMouseDown={handleTimelineMouseDown}
             onClick={handleTimelineClick}
           >
             {/* Ruler */}
@@ -624,6 +737,7 @@ export function Timeline({ simplified = false }: TimelineProps) {
                           clip.startTime
                         )
                       }
+                      onClick={(e) => e.stopPropagation()}
                       onContextMenu={(e) => handleClipContextMenu(e, track.id, clip.id)}
                     >
                       {/* Waveform visualization */}
@@ -668,6 +782,7 @@ export function Timeline({ simplified = false }: TimelineProps) {
                         onMouseDown={(e) =>
                           handleResizeMouseDown(e, clip.id, 'left', clip.startTime)
                         }
+                        onClick={(e) => e.stopPropagation()}
                       />
                       <div
                         className="absolute right-0 top-0 h-full w-2 cursor-e-resize bg-white/0 hover:bg-white/30 group-hover/clip:bg-white/20 z-20"
@@ -679,6 +794,7 @@ export function Timeline({ simplified = false }: TimelineProps) {
                             clip.startTime + clip.duration
                           )
                         }
+                        onClick={(e) => e.stopPropagation()}
                       />
                     </div>
                   );
@@ -707,6 +823,19 @@ export function Timeline({ simplified = false }: TimelineProps) {
             >
               <div className="absolute -top-1 left-1/2 -translate-x-1/2 border-4 border-transparent border-t-red-500" />
             </div>
+
+            {/* Marquee selection box */}
+            {marqueeSelection?.active && (
+              <div
+                className="absolute border-2 border-primary bg-primary/10 pointer-events-none z-30"
+                style={{
+                  left: Math.min(marqueeSelection.startX, marqueeSelection.currentX),
+                  top: Math.min(marqueeSelection.startY, marqueeSelection.currentY),
+                  width: Math.abs(marqueeSelection.currentX - marqueeSelection.startX),
+                  height: Math.abs(marqueeSelection.currentY - marqueeSelection.startY),
+                }}
+              />
+            )}
           </div>
         </div>
       </div>
