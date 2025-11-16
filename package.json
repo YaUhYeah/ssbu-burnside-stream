@@ -48,8 +48,7 @@
     "react-router-dom": "^6.20.1",
     "tailwind-merge": "^2.1.0",
     "uuid": "^9.0.1",
-    "zustand": "^4.4.7",
-    "immer": "^10.0.3"
+    "zustand": "^4.4.7"
   },
   "devDependencies": {
     "@types/lodash-es": "^4.17.12",
@@ -87,13 +86,6 @@
       "electron/**/*",
       "node_modules/**/*"
     ],
-    "extraResources": [
-      {
-        "from": "resources/",
-        "to": "resources/",
-        "filter": ["**/*"]
-      }
-    ],
     "win": {
       "target": [
         {
@@ -101,7 +93,6 @@
           "arch": ["x64"]
         }
       ],
-      "icon": "public/icon.ico",
       "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "mac": {
@@ -111,7 +102,6 @@
           "arch": ["x64", "arm64"]
         }
       ],
-      "icon": "public/icon.icns",
       "category": "public.app-category.video",
       "artifactName": "${productName}-${version}-${arch}.${ext}"
     },
@@ -121,16 +111,12 @@
         "deb",
         "snap"
       ],
-      "icon": "public/icons",
       "category": "Video",
       "artifactName": "${productName}-${version}.${ext}"
     },
     "nsis": {
       "oneClick": true,
       "allowToChangeInstallationDirectory": false,
-      "installerIcon": "public/icon.ico",
-      "uninstallerIcon": "public/icon.ico",
-      "installerHeaderIcon": "public/icon.ico",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "ClipFlow Studio"
