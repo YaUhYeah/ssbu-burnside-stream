@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import { immer } from 'zustand/middleware/immer';
 import { v4 as uuidv4 } from 'uuid';
-import { produce } from 'immer';
 import type {
   Project,
   Track,
@@ -141,7 +141,7 @@ const createDefaultProject = (name: string, aspectRatio: AspectRatio): Project =
 
 export const useProjectStore = create<ProjectState & ProjectActions>()(
   persist(
-    (set, get) => ({
+    immer((set, get) => ({
       // State
       project: null,
       selectedClipIds: [],
@@ -157,7 +157,7 @@ export const useProjectStore = create<ProjectState & ProjectActions>()(
       // Actions
       createProject: (name, aspectRatio) => {
         const project = createDefaultProject(name, aspectRatio);
-        set(produce((state: ProjectState) => {
+        set((state) => {
           state.project = project;
           state.selectedClipIds = [];
           state.selectedTrackId = null;
@@ -166,11 +166,11 @@ export const useProjectStore = create<ProjectState & ProjectActions>()(
           state.undoStack = [];
           state.redoStack = [];
           state.isDirty = false;
-        }));
+        });
       },
 
       loadProject: (project) => {
-        set(produce((state: ProjectState) => {
+        set((state) => {
           state.project = project;
           state.selectedClipIds = [];
           state.selectedTrackId = null;
@@ -179,41 +179,41 @@ export const useProjectStore = create<ProjectState & ProjectActions>()(
           state.undoStack = [];
           state.redoStack = [];
           state.isDirty = false;
-        }));
+        });
       },
 
       saveProject: () => {
-        set(produce((state: ProjectState) => {
+        set((state) => {
           if (state.project) {
             state.project.updatedAt = new Date();
             state.isDirty = false;
           }
-        }));
+        });
       },
 
       updateProject: (updates) => {
         get().pushToUndoStack();
-        set(produce((state: ProjectState) => {
+        set((state) => {
           if (state.project) {
             Object.assign(state.project, updates);
             state.project.updatedAt = new Date();
             state.isDirty = true;
           }
-        }));
+        });
       },
 
       addMedia: (media) => {
-        set(produce((state: ProjectState) => {
+        set((state) => {
           if (state.project) {
             state.project.media.push(media);
             state.isDirty = true;
           }
-        }));
+        });
       },
 
       removeMedia: (mediaId) => {
         get().pushToUndoStack();
-        set(produce((state: ProjectState) => {
+        set((state) => {
           if (state.project) {
             state.project.media = state.project.media.filter((m) => m.id !== mediaId);
             state.project.tracks.forEach((track) => {
@@ -221,32 +221,32 @@ export const useProjectStore = create<ProjectState & ProjectActions>()(
             });
             state.isDirty = true;
           }
-        }));
+        });
       },
 
       addTrack: (type) => {
         get().pushToUndoStack();
-        set(produce((state: ProjectState) => {
+        set((state) => {
           if (state.project) {
             const count = state.project.tracks.filter((t) => t.type === type).length + 1;
             state.project.tracks.push(createDefaultTrack(type, count));
             state.isDirty = true;
           }
-        }));
+        });
       },
 
       removeTrack: (trackId) => {
         get().pushToUndoStack();
-        set(produce((state: ProjectState) => {
+        set((state) => {
           if (state.project) {
             state.project.tracks = state.project.tracks.filter((t) => t.id !== trackId);
             state.isDirty = true;
           }
-        }));
+        });
       },
 
       updateTrack: (trackId, updates) => {
-        set(produce((state: ProjectState) => {
+        set((state) => {
           if (state.project) {
             const track = state.project.tracks.find((t) => t.id === trackId);
             if (track) {
@@ -254,23 +254,23 @@ export const useProjectStore = create<ProjectState & ProjectActions>()(
               state.isDirty = true;
             }
           }
-        }));
+        });
       },
 
       reorderTracks: (fromIndex, toIndex) => {
         get().pushToUndoStack();
-        set(produce((state: ProjectState) => {
+        set((state) => {
           if (state.project) {
             const [track] = state.project.tracks.splice(fromIndex, 1);
             state.project.tracks.splice(toIndex, 0, track);
             state.isDirty = true;
           }
-        }));
+        });
       },
 
       addClip: (trackId, clipData) => {
         get().pushToUndoStack();
-        set(produce((state: ProjectState) => {
+        set((state) => {
           if (state.project) {
             const track = state.project.tracks.find((t) => t.id === trackId);
             if (track) {
@@ -279,46 +279,62 @@ export const useProjectStore = create<ProjectState & ProjectActions>()(
                 id: uuidv4(),
               };
               track.clips.push(clip);
-              state.project.duration = get().calculateDuration();
               state.isDirty = true;
             }
           }
-        }));
+        });
+        // Update duration after state change
+        const duration = get().calculateDuration();
+        set((state) => {
+          if (state.project) {
+            state.project.duration = duration;
+          }
+        });
       },
 
       removeClip: (trackId, clipId) => {
         get().pushToUndoStack();
-        set(produce((state: ProjectState) => {
+        set((state) => {
           if (state.project) {
             const track = state.project.tracks.find((t) => t.id === trackId);
             if (track) {
               track.clips = track.clips.filter((c) => c.id !== clipId);
-              state.project.duration = get().calculateDuration();
               state.isDirty = true;
             }
           }
-        }));
+        });
+        const duration = get().calculateDuration();
+        set((state) => {
+          if (state.project) {
+            state.project.duration = duration;
+          }
+        });
       },
 
       updateClip: (trackId, clipId, updates) => {
-        set(produce((state: ProjectState) => {
+        set((state) => {
           if (state.project) {
             const track = state.project.tracks.find((t) => t.id === trackId);
             if (track) {
               const clip = track.clips.find((c) => c.id === clipId);
               if (clip) {
                 Object.assign(clip, updates);
-                state.project.duration = get().calculateDuration();
                 state.isDirty = true;
               }
             }
           }
-        }));
+        });
+        const duration = get().calculateDuration();
+        set((state) => {
+          if (state.project) {
+            state.project.duration = duration;
+          }
+        });
       },
 
       moveClip: (fromTrackId, toTrackId, clipId, newStartTime) => {
         get().pushToUndoStack();
-        set(produce((state: ProjectState) => {
+        set((state) => {
           if (state.project) {
             const fromTrack = state.project.tracks.find((t) => t.id === fromTrackId);
             const toTrack = state.project.tracks.find((t) => t.id === toTrackId);
@@ -329,17 +345,22 @@ export const useProjectStore = create<ProjectState & ProjectActions>()(
                 clip.trackId = toTrackId;
                 clip.startTime = newStartTime;
                 toTrack.clips.push(clip);
-                state.project.duration = get().calculateDuration();
                 state.isDirty = true;
               }
             }
           }
-        }));
+        });
+        const duration = get().calculateDuration();
+        set((state) => {
+          if (state.project) {
+            state.project.duration = duration;
+          }
+        });
       },
 
       splitClip: (trackId, clipId, splitTime) => {
         get().pushToUndoStack();
-        set(produce((state: ProjectState) => {
+        set((state) => {
           if (state.project) {
             const track = state.project.tracks.find((t) => t.id === trackId);
             if (track) {
@@ -366,12 +387,12 @@ export const useProjectStore = create<ProjectState & ProjectActions>()(
               }
             }
           }
-        }));
+        });
       },
 
       trimClip: (trackId, clipId, inPoint, outPoint) => {
         get().pushToUndoStack();
-        set(produce((state: ProjectState) => {
+        set((state) => {
           if (state.project) {
             const track = state.project.tracks.find((t) => t.id === trackId);
             if (track) {
@@ -381,25 +402,30 @@ export const useProjectStore = create<ProjectState & ProjectActions>()(
                 clip.inPoint = inPoint;
                 clip.outPoint = outPoint;
                 clip.duration = newDuration;
-                state.project.duration = get().calculateDuration();
                 state.isDirty = true;
               }
             }
           }
-        }));
+        });
+        const duration = get().calculateDuration();
+        set((state) => {
+          if (state.project) {
+            state.project.duration = duration;
+          }
+        });
       },
 
       addCaption: (caption) => {
-        set(produce((state: ProjectState) => {
+        set((state) => {
           if (state.project) {
             state.project.captions.push(caption);
             state.isDirty = true;
           }
-        }));
+        });
       },
 
       updateCaption: (captionId, updates) => {
-        set(produce((state: ProjectState) => {
+        set((state) => {
           if (state.project) {
             const caption = state.project.captions.find((c) => c.id === captionId);
             if (caption) {
@@ -407,20 +433,20 @@ export const useProjectStore = create<ProjectState & ProjectActions>()(
               state.isDirty = true;
             }
           }
-        }));
+        });
       },
 
       removeCaption: (captionId) => {
-        set(produce((state: ProjectState) => {
+        set((state) => {
           if (state.project) {
             state.project.captions = state.project.captions.filter((c) => c.id !== captionId);
             state.isDirty = true;
           }
-        }));
+        });
       },
 
       selectClip: (clipId, multi = false) => {
-        set(produce((state: ProjectState) => {
+        set((state) => {
           if (multi) {
             const index = state.selectedClipIds.indexOf(clipId);
             if (index === -1) {
@@ -431,94 +457,94 @@ export const useProjectStore = create<ProjectState & ProjectActions>()(
           } else {
             state.selectedClipIds = [clipId];
           }
-        }));
+        });
       },
 
       deselectAllClips: () => {
-        set(produce((state: ProjectState) => {
+        set((state) => {
           state.selectedClipIds = [];
-        }));
+        });
       },
 
       selectTrack: (trackId) => {
-        set(produce((state: ProjectState) => {
+        set((state) => {
           state.selectedTrackId = trackId;
-        }));
+        });
       },
 
       setCurrentTime: (time) => {
-        set(produce((state: ProjectState) => {
+        set((state) => {
           state.currentTime = Math.max(0, time);
-        }));
+        });
       },
 
       play: () => {
-        set(produce((state: ProjectState) => {
+        set((state) => {
           state.isPlaying = true;
-        }));
+        });
       },
 
       pause: () => {
-        set(produce((state: ProjectState) => {
+        set((state) => {
           state.isPlaying = false;
-        }));
+        });
       },
 
       togglePlay: () => {
-        set(produce((state: ProjectState) => {
+        set((state) => {
           state.isPlaying = !state.isPlaying;
-        }));
+        });
       },
 
       seekForward: (seconds) => {
-        set(produce((state: ProjectState) => {
+        set((state) => {
           state.currentTime = Math.min(
             state.currentTime + seconds,
             state.project?.duration || 0
           );
-        }));
+        });
       },
 
       seekBackward: (seconds) => {
-        set(produce((state: ProjectState) => {
+        set((state) => {
           state.currentTime = Math.max(0, state.currentTime - seconds);
-        }));
+        });
       },
 
       setZoom: (zoom) => {
-        set(produce((state: ProjectState) => {
+        set((state) => {
           state.zoom = Math.max(0.1, Math.min(10, zoom));
-        }));
+        });
       },
 
       setScrollPosition: (position) => {
-        set(produce((state: ProjectState) => {
+        set((state) => {
           state.scrollPosition = position;
-        }));
+        });
       },
 
       undo: () => {
-        set(produce((state: ProjectState) => {
+        set((state) => {
           if (state.undoStack.length > 0 && state.project) {
             state.redoStack.push(JSON.parse(JSON.stringify(state.project)));
             state.project = state.undoStack.pop()!;
             state.isDirty = true;
           }
-        }));
+        });
       },
 
       redo: () => {
-        set(produce((state: ProjectState) => {
+        set((state) => {
           if (state.redoStack.length > 0 && state.project) {
             state.undoStack.push(JSON.parse(JSON.stringify(state.project)));
             state.project = state.redoStack.pop()!;
             state.isDirty = true;
           }
-        }));
+        });
       },
 
       pushToUndoStack: () => {
-        set(produce((state: ProjectState) => {
+        set((state) => {
           if (state.project) {
             state.undoStack.push(JSON.parse(JSON.stringify(state.project)));
             state.redoStack = [];
@@ -526,7 +552,7 @@ export const useProjectStore = create<ProjectState & ProjectActions>()(
               state.undoStack.shift();
             }
           }
-        }));
+        });
       },
 
       getClipAtTime: (trackId, time) => {
@@ -565,7 +591,7 @@ export const useProjectStore = create<ProjectState & ProjectActions>()(
         });
         return maxDuration;
       },
-    }),
+    })),
     {
       name: 'clipflow-project',
       storage: createJSONStorage(() => localStorage),
