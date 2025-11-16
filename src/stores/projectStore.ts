@@ -36,6 +36,7 @@ interface ProjectActions {
   // Media
   addMedia: (media: MediaFile) => void;
   removeMedia: (mediaId: string) => void;
+  updateMediaFile: (mediaId: string, updates: Partial<MediaFile>) => void;
 
   // Tracks
   addTrack: (type: Track['type']) => void;
@@ -50,6 +51,7 @@ interface ProjectActions {
   moveClip: (fromTrackId: string, toTrackId: string, clipId: string, newStartTime: number) => void;
   splitClip: (trackId: string, clipId: string, splitTime: number) => void;
   trimClip: (trackId: string, clipId: string, inPoint: number, outPoint: number) => void;
+  separateVideoAudio: (trackId: string, clipId: string) => void;
 
   // Captions
   addCaption: (caption: Caption) => void;
@@ -234,6 +236,20 @@ export const useProjectStore = create<ProjectState & ProjectActions>()(
               track.clips = track.clips.filter((clip) => clip.mediaId !== mediaId);
             });
             state.isDirty = true;
+          }
+        });
+      },
+
+      updateMediaFile: (mediaId, updates) => {
+        set((state) => {
+          if (state.project) {
+            const mediaIndex = state.project.media.findIndex((m) => m.id === mediaId);
+            if (mediaIndex >= 0) {
+              state.project.media[mediaIndex] = {
+                ...state.project.media[mediaIndex],
+                ...updates,
+              };
+            }
           }
         });
       },
@@ -425,6 +441,78 @@ export const useProjectStore = create<ProjectState & ProjectActions>()(
         set((state) => {
           if (state.project) {
             state.project.duration = duration;
+          }
+        });
+      },
+
+      separateVideoAudio: (trackId, clipId) => {
+        get().pushToUndoStack();
+        set((state) => {
+          if (state.project) {
+            const track = state.project.tracks.find((t) => t.id === trackId);
+            if (!track) return;
+
+            const clip = track.clips.find((c) => c.id === clipId);
+            if (!clip) return;
+
+            const media = state.project.media.find((m) => m.id === clip.mediaId);
+            if (!media || media.type !== 'video') return;
+
+            // Create audio version of the media file
+            const audioMedia: MediaFile = {
+              id: `${media.id}-audio`,
+              name: `${media.name} (Audio)`,
+              path: media.path,
+              type: 'audio',
+              duration: media.duration,
+              size: media.size,
+              waveform: media.waveform,
+              createdAt: new Date(),
+            };
+
+            // Add the audio media file
+            state.project.media.push(audioMedia);
+
+            // Find or create audio track
+            let audioTrack = state.project.tracks.find((t) => t.type === 'audio');
+            if (!audioTrack) {
+              const newTrackId = `audio-${Date.now()}`;
+              audioTrack = {
+                id: newTrackId,
+                name: `Audio ${state.project.tracks.filter((t) => t.type === 'audio').length + 1}`,
+                type: 'audio',
+                muted: false,
+                locked: false,
+                visible: true,
+                height: 60,
+                clips: [],
+              };
+              state.project.tracks.push(audioTrack);
+            }
+
+            // Create audio clip mirroring the video clip
+            const audioClip: TimelineClip = {
+              id: `${clip.id}-audio`,
+              mediaId: audioMedia.id,
+              trackId: audioTrack.id,
+              startTime: clip.startTime,
+              duration: clip.duration,
+              inPoint: clip.inPoint,
+              outPoint: clip.outPoint,
+              volume: clip.volume,
+              opacity: 1,
+              effects: [],
+              transitions: [],
+              locked: false,
+            };
+
+            // Add audio clip to audio track
+            audioTrack.clips.push(audioClip);
+
+            // Mute the original video clip (detach audio)
+            clip.volume = 0;
+
+            state.isDirty = true;
           }
         });
       },

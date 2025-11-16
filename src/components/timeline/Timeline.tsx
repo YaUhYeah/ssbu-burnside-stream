@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, useMemo } from 'react';
-import { Plus, Minus, Lock, Eye, EyeOff, Volume2, VolumeX, Trash2, X, Magnet, Maximize, RotateCcw } from 'lucide-react';
+import { Plus, Minus, Lock, Eye, EyeOff, Volume2, VolumeX, Trash2, X, Magnet, Maximize, RotateCcw, Unlink } from 'lucide-react';
 import { useProjectStore } from '@/stores/projectStore';
 import { cn, formatTime, timeToPixels, pixelsToTime } from '@/lib/utils';
 import toast from 'react-hot-toast';
@@ -19,6 +19,8 @@ export function Timeline({ simplified = false }: TimelineProps) {
   const [snapGuideTime, setSnapGuideTime] = useState<number | null>(null);
   const [isResizing, setIsResizing] = useState(false);
   const [resizeEdge, setResizeEdge] = useState<'left' | 'right' | null>(null);
+  const [pendingDrag, setPendingDrag] = useState(false);
+  const [dragThresholdMet, setDragThresholdMet] = useState(false);
 
   const {
     project,
@@ -37,6 +39,7 @@ export function Timeline({ simplified = false }: TimelineProps) {
     removeClip,
     removeTrack,
     updateProject,
+    separateVideoAudio,
   } = useProjectStore();
 
   const pixelsPerSecond = 50;
@@ -117,11 +120,14 @@ export function Timeline({ simplified = false }: TimelineProps) {
     clipStartTime: number
   ) => {
     e.stopPropagation();
-    setIsDragging(true);
+    // Select immediately on click (don't require drag)
+    selectClip(clipId, e.ctrlKey || e.metaKey);
+    // Set up potential drag (only start actual drag after threshold)
+    setPendingDrag(true);
+    setDragThresholdMet(false);
     setDragClipId(clipId);
     setDragStartX(e.clientX);
     setDragStartTime(clipStartTime);
-    selectClip(clipId, e.ctrlKey || e.metaKey);
   };
 
   const handleMouseMove = (e: MouseEvent) => {
@@ -160,22 +166,32 @@ export function Timeline({ simplified = false }: TimelineProps) {
           break;
         }
       }
-    } else if (isDragging) {
-      // Handle clip dragging
+    } else if (pendingDrag || isDragging) {
+      // Check if drag threshold is met (5 pixels)
       const deltaX = e.clientX - dragStartX;
-      const deltaTime = pixelsToTime(deltaX, zoom, pixelsPerSecond);
-      let newTime = dragStartTime + deltaTime;
 
-      // Snap to nearest clip edge or grid
-      newTime = snapToNearestPoint(newTime);
-      newTime = Math.max(0, newTime);
+      if (!dragThresholdMet && Math.abs(deltaX) > 5) {
+        setDragThresholdMet(true);
+        setIsDragging(true);
+        setPendingDrag(false);
+      }
 
-      // Find and update the clip
-      for (const track of project.tracks) {
-        const clip = track.clips.find((c) => c.id === dragClipId);
-        if (clip) {
-          updateClip(track.id, clip.id, { startTime: newTime });
-          break;
+      if (isDragging || dragThresholdMet) {
+        // Handle clip dragging
+        const deltaTime = pixelsToTime(deltaX, zoom, pixelsPerSecond);
+        let newTime = dragStartTime + deltaTime;
+
+        // Snap to nearest clip edge or grid
+        newTime = snapToNearestPoint(newTime);
+        newTime = Math.max(0, newTime);
+
+        // Find and update the clip
+        for (const track of project.tracks) {
+          const clip = track.clips.find((c) => c.id === dragClipId);
+          if (clip) {
+            updateClip(track.id, clip.id, { startTime: newTime });
+            break;
+          }
         }
       }
     }
@@ -187,6 +203,8 @@ export function Timeline({ simplified = false }: TimelineProps) {
     setResizeEdge(null);
     setDragClipId(null);
     setSnapGuideTime(null);
+    setPendingDrag(false);
+    setDragThresholdMet(false);
   };
 
   // Handle clip resize
@@ -205,7 +223,7 @@ export function Timeline({ simplified = false }: TimelineProps) {
   };
 
   useEffect(() => {
-    if (isDragging || isResizing) {
+    if (isDragging || isResizing || pendingDrag) {
       window.addEventListener('mousemove', handleMouseMove);
       window.addEventListener('mouseup', handleMouseUp);
     }
@@ -214,7 +232,7 @@ export function Timeline({ simplified = false }: TimelineProps) {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isDragging, isResizing, dragClipId, dragStartX, dragStartTime, resizeEdge]);
+  }, [isDragging, isResizing, pendingDrag, dragClipId, dragStartX, dragStartTime, resizeEdge, dragThresholdMet]);
 
   // Handle keyboard shortcuts for clip deletion
   useEffect(() => {
@@ -267,6 +285,21 @@ export function Timeline({ simplified = false }: TimelineProps) {
     }
     removeTrack(trackId);
     toast.success(`Removed ${trackName}`);
+  };
+
+  const handleSeparateAudio = (trackId: string, clipId: string) => {
+    const track = project?.tracks.find((t) => t.id === trackId);
+    const clip = track?.clips.find((c) => c.id === clipId);
+    const media = project?.media.find((m) => m.id === clip?.mediaId);
+
+    if (media?.type !== 'video') {
+      toast.error('Only video clips can be separated');
+      return;
+    }
+
+    separateVideoAudio(trackId, clipId);
+    setContextMenu(null);
+    toast.success('Audio separated from video');
   };
 
   if (!project) return null;
@@ -517,7 +550,7 @@ export function Timeline({ simplified = false }: TimelineProps) {
                           'ring-2 ring-yellow-400',
                         track.type === 'audio' && 'bg-green-500/80',
                         track.type === 'caption' && 'bg-yellow-500/80',
-                        isDragging && dragClipId === clip.id && 'opacity-80'
+                        (isDragging || isResizing) && dragClipId === clip.id && 'dragging'
                       )}
                       style={{ left, width: Math.max(width, 20) }}
                       onMouseDown={(e) =>
@@ -530,24 +563,51 @@ export function Timeline({ simplified = false }: TimelineProps) {
                       }
                       onContextMenu={(e) => handleClipContextMenu(e, track.id, clip.id)}
                     >
-                      <div className="flex h-full flex-col justify-between p-1 pointer-events-none">
-                        <span className="truncate text-[10px] font-medium text-white">
+                      {/* Waveform visualization */}
+                      {media?.waveform && media.waveform.length > 0 && (
+                        <div className="absolute inset-0 flex items-center justify-center overflow-hidden opacity-40">
+                          <svg
+                            className="h-full w-full"
+                            preserveAspectRatio="none"
+                            viewBox={`0 0 ${media.waveform.length} 100`}
+                          >
+                            {media.waveform.map((value, i) => {
+                              const height = Math.max(2, value * 80);
+                              const y = (100 - height) / 2;
+                              return (
+                                <rect
+                                  key={i}
+                                  x={i}
+                                  y={y}
+                                  width="1"
+                                  height={height}
+                                  fill="currentColor"
+                                  className="text-white"
+                                />
+                              );
+                            })}
+                          </svg>
+                        </div>
+                      )}
+
+                      <div className="flex h-full flex-col justify-between p-1 pointer-events-none relative z-10">
+                        <span className="truncate text-[10px] font-medium text-white drop-shadow-sm">
                           {media?.name || 'Unknown'}
                         </span>
-                        <span className="text-[9px] text-white/70">
+                        <span className="text-[9px] text-white/70 drop-shadow-sm">
                           {formatTime(clip.duration)}
                         </span>
                       </div>
 
                       {/* Resize handles */}
                       <div
-                        className="absolute left-0 top-0 h-full w-2 cursor-w-resize bg-white/0 hover:bg-white/30 group-hover/clip:bg-white/20"
+                        className="absolute left-0 top-0 h-full w-2 cursor-w-resize bg-white/0 hover:bg-white/30 group-hover/clip:bg-white/20 z-20"
                         onMouseDown={(e) =>
                           handleResizeMouseDown(e, clip.id, 'left', clip.startTime)
                         }
                       />
                       <div
-                        className="absolute right-0 top-0 h-full w-2 cursor-e-resize bg-white/0 hover:bg-white/30 group-hover/clip:bg-white/20"
+                        className="absolute right-0 top-0 h-full w-2 cursor-e-resize bg-white/0 hover:bg-white/30 group-hover/clip:bg-white/20 z-20"
                         onMouseDown={(e) =>
                           handleResizeMouseDown(
                             e,
@@ -595,13 +655,32 @@ export function Timeline({ simplified = false }: TimelineProps) {
           style={{ left: contextMenu.x, top: contextMenu.y }}
           onClick={(e) => e.stopPropagation()}
         >
-          <button
-            onClick={() => handleDeleteClip(contextMenu.trackId, contextMenu.clipId)}
-            className="flex w-full items-center gap-2 px-3 py-2 text-sm text-destructive hover:bg-accent"
-          >
-            <Trash2 className="h-4 w-4" />
-            Delete Clip
-          </button>
+          {(() => {
+            const track = project.tracks.find((t) => t.id === contextMenu.trackId);
+            const clip = track?.clips.find((c) => c.id === contextMenu.clipId);
+            const media = project.media.find((m) => m.id === clip?.mediaId);
+            const isVideoClip = media?.type === 'video';
+            return (
+              <>
+                {isVideoClip && (
+                  <button
+                    onClick={() => handleSeparateAudio(contextMenu.trackId, contextMenu.clipId)}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent"
+                  >
+                    <Unlink className="h-4 w-4" />
+                    Separate Audio
+                  </button>
+                )}
+                <button
+                  onClick={() => handleDeleteClip(contextMenu.trackId, contextMenu.clipId)}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-sm text-destructive hover:bg-accent"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Delete Clip
+                </button>
+              </>
+            );
+          })()}
         </div>
       )}
     </div>

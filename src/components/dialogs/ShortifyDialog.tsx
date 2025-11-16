@@ -1,10 +1,18 @@
 import { useState } from 'react';
-import { X, Wand2, Sparkles, Clock, Zap } from 'lucide-react';
+import { X, Wand2, Sparkles, Clock, Zap, TrendingUp, BarChart3, Eye } from 'lucide-react';
 import { useUIStore } from '@/stores/uiStore';
 import { useProjectStore } from '@/stores/projectStore';
 import { v4 as uuidv4 } from 'uuid';
 import toast from 'react-hot-toast';
-import type { Track, TimelineClip } from '@/types';
+import type { Track, TimelineClip, Transition } from '@/types';
+
+interface HighlightSegment {
+  start: number;
+  end: number;
+  score: number;
+  type: 'peak' | 'hook' | 'climax' | 'engagement';
+  label: string;
+}
 
 export function ShortifyDialog() {
   const { setShowShortifyDialog, setProcessing, setProcessingProgress } = useUIStore();
@@ -14,6 +22,93 @@ export function ShortifyDialog() {
   const [style, setStyle] = useState<'hook' | 'highlights' | 'summary'>('highlights');
   const [addCaptions, setAddCaptions] = useState(true);
   const [verticalCrop, setVerticalCrop] = useState(true);
+  const [autoTransitions, setAutoTransitions] = useState(true);
+  const [estimatedViews, setEstimatedViews] = useState<number | null>(null);
+  const [engagementScore, setEngagementScore] = useState<number | null>(null);
+
+  // Detect hype moments from audio waveform
+  const detectHypeMoments = (waveform: number[], duration: number): HighlightSegment[] => {
+    const segments: HighlightSegment[] = [];
+    const samplesPerSecond = waveform.length / duration;
+
+    // Find peaks in the waveform
+    const windowSize = Math.floor(samplesPerSecond * 3); // 3 second windows
+    const threshold = 0.6; // High energy threshold
+
+    for (let i = 0; i < waveform.length - windowSize; i += Math.floor(windowSize / 2)) {
+      let maxEnergy = 0;
+      let avgEnergy = 0;
+
+      for (let j = i; j < i + windowSize; j++) {
+        maxEnergy = Math.max(maxEnergy, waveform[j]);
+        avgEnergy += waveform[j];
+      }
+      avgEnergy /= windowSize;
+
+      if (maxEnergy > threshold && avgEnergy > 0.3) {
+        const startTime = (i / waveform.length) * duration;
+        const endTime = ((i + windowSize) / waveform.length) * duration;
+
+        segments.push({
+          start: startTime,
+          end: endTime,
+          score: maxEnergy,
+          type: maxEnergy > 0.8 ? 'climax' : 'peak',
+          label: maxEnergy > 0.8 ? 'Hype Moment' : 'High Energy',
+        });
+      }
+    }
+
+    // Sort by score (highest first)
+    segments.sort((a, b) => b.score - a.score);
+
+    // Remove overlapping segments
+    const filtered: HighlightSegment[] = [];
+    for (const seg of segments) {
+      const hasOverlap = filtered.some(
+        (f) => !(seg.end < f.start || seg.start > f.end)
+      );
+      if (!hasOverlap) {
+        filtered.push(seg);
+      }
+    }
+
+    return filtered;
+  };
+
+  // Calculate estimated engagement metrics
+  const calculateEngagementMetrics = (
+    clips: HighlightSegment[],
+    totalDuration: number,
+    hasHook: boolean
+  ) => {
+    // Base engagement factors
+    let baseScore = 50;
+
+    // Boost for hype moments
+    const hypeMoments = clips.filter((c) => c.type === 'climax' || c.type === 'peak').length;
+    baseScore += hypeMoments * 10;
+
+    // Boost for having a hook
+    if (hasHook) baseScore += 15;
+
+    // Penalty for too long
+    if (totalDuration > 60) baseScore -= 10;
+    if (totalDuration > 30 && totalDuration <= 60) baseScore -= 5;
+
+    // Boost for vertical format
+    if (verticalCrop) baseScore += 10;
+
+    // Cap at 100
+    const finalScore = Math.min(100, Math.max(0, baseScore));
+
+    // Estimate views based on score (simplified viral coefficient)
+    const baseViews = 500;
+    const viralMultiplier = Math.pow(1.5, finalScore / 20);
+    const estimatedImpressions = Math.round(baseViews * viralMultiplier);
+
+    return { score: finalScore, views: estimatedImpressions };
+  };
 
   const handleShortify = async () => {
     if (!project || project.media.length === 0) {
@@ -28,13 +123,11 @@ export function ShortifyDialog() {
     }
 
     setShowShortifyDialog(false);
-    setProcessing(true, 'Generating short clips...');
+    setProcessing(true, 'Analyzing video for hype moments...');
 
     try {
       setProcessingProgress(10);
 
-      // Use lightweight time-based segmentation instead of heavy audio analysis
-      // This prevents memory issues and app crashes with large files
       const videoDuration = videoMedia.duration;
 
       if (videoDuration < duration) {
@@ -43,95 +136,165 @@ export function ShortifyDialog() {
         return;
       }
 
-      setProcessingProgress(30);
-
-      // Generate smart segments based on style without loading entire file
-      let selectedClips: Array<{ start: number; end: number; score: number }> = [];
-      let totalDuration = 0;
-
-      // Yield to UI
+      setProcessingProgress(20);
       await new Promise((resolve) => setTimeout(resolve, 10));
 
+      // Detect hype moments if waveform data is available
+      let hypeMoments: HighlightSegment[] = [];
+      if (videoMedia.waveform && videoMedia.waveform.length > 0) {
+        hypeMoments = detectHypeMoments(videoMedia.waveform, videoDuration);
+      }
+
+      setProcessingProgress(40);
+
+      // Generate smart segments based on style with hype moment integration
+      let selectedClips: HighlightSegment[] = [];
+
       if (style === 'hook') {
-        // Hook style: attention-grabbing start + middle highlight + end CTA
-        const hookDuration = Math.min(duration * 0.4, 12);
-        const highlightDuration = Math.min(duration * 0.4, 12);
-        const ctaDuration = duration - hookDuration - highlightDuration;
+        // Hook style: attention-grabbing start + best hype moments + end CTA
+        const hookDuration = Math.min(duration * 0.3, 10);
+        const ctaDuration = Math.min(duration * 0.15, 6);
+        const remainingDuration = duration - hookDuration - ctaDuration;
 
+        // Strong hook at the beginning (first moment with action or skip intro)
+        const hookStart = videoDuration * 0.05; // Skip first 5% (usually intro)
         selectedClips.push({
-          start: 0,
-          end: hookDuration,
+          start: hookStart,
+          end: hookStart + hookDuration,
           score: 1,
+          type: 'hook',
+          label: 'Opening Hook',
         });
 
-        // Pick an interesting middle section
-        const middleStart = videoDuration * 0.4;
-        selectedClips.push({
-          start: middleStart,
-          end: middleStart + highlightDuration,
-          score: 0.9,
-        });
-
-        if (ctaDuration > 0) {
-          // End section for CTA
-          const endStart = Math.max(videoDuration - ctaDuration - 5, videoDuration * 0.8);
+        // Use detected hype moments if available
+        if (hypeMoments.length > 0) {
+          let remainingTime = remainingDuration;
+          for (const moment of hypeMoments) {
+            if (remainingTime <= 0) break;
+            const clipDuration = Math.min(moment.end - moment.start, remainingTime);
+            selectedClips.push({
+              ...moment,
+              end: moment.start + clipDuration,
+            });
+            remainingTime -= clipDuration;
+          }
+        } else {
+          // Fallback: pick interesting middle section
+          const middleStart = videoDuration * 0.4;
           selectedClips.push({
-            start: endStart,
-            end: endStart + ctaDuration,
-            score: 0.8,
+            start: middleStart,
+            end: middleStart + remainingDuration,
+            score: 0.9,
+            type: 'engagement',
+            label: 'Key Moment',
           });
         }
 
-        totalDuration = hookDuration + highlightDuration + ctaDuration;
+        // End with CTA section
+        const endStart = Math.max(videoDuration - ctaDuration - 2, videoDuration * 0.85);
+        selectedClips.push({
+          start: endStart,
+          end: endStart + ctaDuration,
+          score: 0.8,
+          type: 'engagement',
+          label: 'Call to Action',
+        });
       } else if (style === 'highlights') {
-        // Highlights style: pick evenly distributed segments from interesting parts
-        const numSegments = Math.ceil(duration / 8); // ~8 second segments
-        const segmentDuration = duration / numSegments;
+        // Highlights style: prioritize detected hype moments
+        if (hypeMoments.length >= 2) {
+          let remainingTime = duration;
 
-        // Focus on middle portions (usually more interesting than start/end)
-        const startOffset = videoDuration * 0.1;
-        const endOffset = videoDuration * 0.9;
-        const availableDuration = endOffset - startOffset;
-        const step = availableDuration / (numSegments + 1);
+          // Use top hype moments
+          for (const moment of hypeMoments) {
+            if (remainingTime <= 0) break;
 
-        for (let i = 0; i < numSegments; i++) {
-          const start = startOffset + step * (i + 1) - segmentDuration / 2;
-          selectedClips.push({
-            start: Math.max(0, start),
-            end: Math.min(start + segmentDuration, videoDuration),
-            score: 1 - (i * 0.1),
-          });
-          totalDuration += segmentDuration;
+            const clipDuration = Math.min(moment.end - moment.start, remainingTime, 12);
+            selectedClips.push({
+              ...moment,
+              end: moment.start + clipDuration,
+            });
+            remainingTime -= clipDuration;
+          }
+
+          // Fill remaining time with strategic picks
+          if (remainingTime > 3) {
+            const fillCount = Math.ceil(remainingTime / 8);
+            const step = videoDuration / (fillCount + 1);
+            for (let i = 0; i < fillCount && remainingTime > 0; i++) {
+              const start = step * (i + 1);
+              const clipDuration = Math.min(remainingTime, 6);
+
+              // Skip if overlaps with existing clips
+              const overlaps = selectedClips.some(
+                (c) => !(start + clipDuration < c.start || start > c.end)
+              );
+
+              if (!overlaps) {
+                selectedClips.push({
+                  start,
+                  end: start + clipDuration,
+                  score: 0.7,
+                  type: 'engagement',
+                  label: 'Filler Moment',
+                });
+                remainingTime -= clipDuration;
+              }
+            }
+          }
+        } else {
+          // Fallback: evenly distributed segments
+          const numSegments = Math.ceil(duration / 8);
+          const segmentDuration = duration / numSegments;
+          const startOffset = videoDuration * 0.1;
+          const endOffset = videoDuration * 0.9;
+          const step = (endOffset - startOffset) / (numSegments + 1);
+
+          for (let i = 0; i < numSegments; i++) {
+            const start = startOffset + step * (i + 1) - segmentDuration / 2;
+            selectedClips.push({
+              start: Math.max(0, start),
+              end: Math.min(start + segmentDuration, videoDuration),
+              score: 1 - i * 0.1,
+              type: 'engagement',
+              label: `Highlight ${i + 1}`,
+            });
+          }
         }
       } else {
-        // Summary style: chronological sampling throughout video
-        const numSegments = Math.ceil(duration / 10); // ~10 second segments
+        // Summary style: chronological with strategic picks
+        const numSegments = Math.ceil(duration / 10);
         const segmentDuration = duration / numSegments;
         const step = videoDuration / numSegments;
 
         for (let i = 0; i < numSegments; i++) {
-          const start = step * i + step * 0.2; // Offset slightly into each section
+          const start = step * i + step * 0.2;
           selectedClips.push({
             start: Math.max(0, start),
             end: Math.min(start + segmentDuration, videoDuration),
             score: 1,
+            type: 'engagement',
+            label: `Part ${i + 1}`,
           });
-          totalDuration += segmentDuration;
         }
       }
 
-      setProcessingProgress(50);
+      setProcessingProgress(60);
 
-      // Sort clips by time for narrative flow (summary) or keep as-is
-      if (style === 'summary') {
-        selectedClips.sort((a, b) => a.start - b.start);
-      }
+      // Sort clips chronologically for better flow
+      selectedClips.sort((a, b) => a.start - b.start);
+
+      // Calculate engagement metrics
+      const hasHook = selectedClips.some((c) => c.type === 'hook');
+      const totalDuration = selectedClips.reduce((sum, c) => sum + (c.end - c.start), 0);
+      const metrics = calculateEngagementMetrics(selectedClips, totalDuration, hasHook);
+      setEngagementScore(metrics.score);
+      setEstimatedViews(metrics.views);
 
       // Create a new track for the short
       const shortTrackId = uuidv4();
       const shortTrack: Track = {
         id: shortTrackId,
-        name: `Short (${duration}s ${style})`,
+        name: `Short (${duration}s ${style}) - ${metrics.score}% engagement`,
         type: 'video',
         clips: [],
         height: 80,
@@ -140,10 +303,27 @@ export function ShortifyDialog() {
         visible: true,
       };
 
-      // Add clips to the track
+      setProcessingProgress(70);
+
+      // Add clips to the track with optional transitions
       let timelinePosition = 0;
-      selectedClips.forEach((clip) => {
+      selectedClips.forEach((clip, index) => {
         const clipId = uuidv4();
+        const transitions: Transition[] = [];
+
+        // Add transitions between clips
+        if (autoTransitions && index > 0) {
+          const transitionTypes: Array<Transition['type']> = ['fade', 'dissolve', 'wipe-left', 'zoom-in'];
+          const randomTransition = transitionTypes[Math.floor(Math.random() * transitionTypes.length)];
+          transitions.push({
+            id: uuidv4(),
+            type: randomTransition,
+            duration: 0.3,
+            position: 'start',
+            params: {},
+          });
+        }
+
         const clipData: TimelineClip = {
           id: clipId,
           mediaId: videoMedia.id,
@@ -155,34 +335,33 @@ export function ShortifyDialog() {
           opacity: 1,
           volume: 1,
           effects: [],
-          transitions: [],
+          transitions,
           locked: false,
         };
         shortTrack.clips.push(clipData);
         timelinePosition += clip.end - clip.start;
       });
 
-      setProcessingProgress(70);
-
-      // Skip heavy caption generation to avoid memory issues
-      if (addCaptions) {
-        toast.success('Auto-captions available via Captions panel');
-      }
-
       setProcessingProgress(85);
 
-      // Update project resolution for vertical crop
+      // Update project - keep original resolution centered, don't stretch
       if (verticalCrop) {
+        // Create vertical canvas but DON'T stretch the video
+        // The video will be rendered centered with letterboxing/pillarboxing
+        // This maintains the original video quality and aspect ratio
         updateProject({
           tracks: [...project.tracks, shortTrack],
           resolution: {
             width: 1080,
             height: 1920,
-            label: '1080x1920',
+            label: '1080x1920 (Vertical)',
           },
           aspectRatio: '9:16',
           duration: Math.max(project.duration, timelinePosition),
         });
+
+        // Add a note about how the video will be rendered
+        toast.success('Vertical format: Video will be centered (not stretched) on 9:16 canvas');
       } else {
         updateProject({
           tracks: [...project.tracks, shortTrack],
@@ -191,8 +370,10 @@ export function ShortifyDialog() {
       }
 
       setProcessingProgress(100);
+
+      const hypeMomentCount = selectedClips.filter((c) => c.type === 'climax' || c.type === 'peak').length;
       toast.success(
-        `Created ${duration}s short with ${selectedClips.length} clips! Check your timeline.`
+        `Created ${Math.round(totalDuration)}s short with ${selectedClips.length} clips and ${hypeMomentCount} hype moments! Estimated ${metrics.views.toLocaleString()} impressions.`
       );
     } catch (error) {
       console.error('Shortify error:', error);
@@ -302,6 +483,15 @@ export function ShortifyDialog() {
               <label className="flex items-center gap-2">
                 <input
                   type="checkbox"
+                  checked={autoTransitions}
+                  onChange={(e) => setAutoTransitions(e.target.checked)}
+                  className="h-4 w-4 rounded border-input"
+                />
+                <span className="text-sm">Auto-add transitions between clips</span>
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
                   checked={addCaptions}
                   onChange={(e) => setAddCaptions(e.target.checked)}
                   className="h-4 w-4 rounded border-input"
@@ -315,10 +505,39 @@ export function ShortifyDialog() {
                   onChange={(e) => setVerticalCrop(e.target.checked)}
                   className="h-4 w-4 rounded border-input"
                 />
-                <span className="text-sm">Smart vertical crop (9:16)</span>
+                <div className="text-sm">
+                  <span>Vertical canvas (9:16)</span>
+                  <p className="text-xs text-muted-foreground">Centers video without stretching</p>
+                </div>
               </label>
             </div>
           </div>
+
+          {/* Analytics Preview */}
+          {engagementScore !== null && (
+            <div className="rounded-md bg-gradient-to-r from-green-500/10 to-blue-500/10 p-4">
+              <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
+                <TrendingUp className="h-4 w-4 text-green-500" />
+                Estimated Performance
+              </h4>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <BarChart3 className="h-4 w-4 text-blue-500" />
+                    <span className="text-xs text-muted-foreground">Engagement</span>
+                  </div>
+                  <p className="text-2xl font-bold">{engagementScore}%</p>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Eye className="h-4 w-4 text-purple-500" />
+                    <span className="text-xs text-muted-foreground">Est. Impressions</span>
+                  </div>
+                  <p className="text-2xl font-bold">{estimatedViews?.toLocaleString()}</p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="mt-6 flex justify-end gap-2">

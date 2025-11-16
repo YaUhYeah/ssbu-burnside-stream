@@ -53,6 +53,23 @@ export function Preview() {
     };
   }, [isPlaying, project]);
 
+  // Immediately pause/play all videos when isPlaying changes
+  useEffect(() => {
+    if (!project) return;
+
+    videoSourcesRef.current.forEach((source) => {
+      if (!isPlaying) {
+        // Immediately stop all audio/video when paused
+        source.video.pause();
+      }
+    });
+
+    // Force a render to update visual state
+    if (!isPlaying) {
+      renderFrame();
+    }
+  }, [isPlaying, project]);
+
   // Initialize video sources for all media
   useEffect(() => {
     if (!project) return;

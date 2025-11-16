@@ -1,6 +1,7 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useState, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { v4 as uuidv4 } from 'uuid';
+import { getAudioProcessor } from '@/utils/audioProcessor';
 import {
   Film,
   Music,
@@ -33,11 +34,43 @@ const PANEL_ICONS: Record<PanelType, typeof Film> = {
 
 export function Sidebar() {
   const { currentPanel, setCurrentPanel } = useUIStore();
-  const { addMedia, project, updateProject } = useProjectStore();
+  const { addMedia, project, updateProject, updateMediaFile } = useProjectStore();
 
   // Resolution matching state
   const [pendingMedia, setPendingMedia] = useState<MediaFile | null>(null);
   const [showResolutionDialog, setShowResolutionDialog] = useState(false);
+  const pendingFileRef = useRef<File | null>(null);
+
+  // Helper to extract audio from video and generate waveform
+  const generateWaveformFromFile = useCallback(async (file: File, mediaId: string): Promise<void> => {
+    try {
+      const audioProcessor = getAudioProcessor();
+      const result = await audioProcessor.analyzeAudio(file);
+      // Update the media file with waveform data
+      updateMediaFile(mediaId, { waveform: result.waveform });
+    } catch (error) {
+      console.warn('Failed to generate waveform:', error);
+    }
+  }, [updateMediaFile]);
+
+  // Helper to extract audio from video element
+  const extractAudioFromVideo = useCallback(async (videoUrl: string, mediaId: string): Promise<void> => {
+    try {
+      // Fetch the video blob
+      const response = await fetch(videoUrl);
+      const videoBlob = await response.blob();
+
+      // Try to analyze the video as audio (browsers can often decode audio from video containers)
+      const audioProcessor = getAudioProcessor();
+      const result = await audioProcessor.analyzeAudio(videoBlob);
+      updateMediaFile(mediaId, { waveform: result.waveform });
+    } catch (error) {
+      console.warn('Failed to extract audio from video:', error);
+      // Generate a simple waveform as fallback
+      const fallbackWaveform = Array.from({ length: 200 }, () => Math.random() * 0.5 + 0.2);
+      updateMediaFile(mediaId, { waveform: fallbackWaveform });
+    }
+  }, [updateMediaFile]);
 
   const onDrop = useCallback(
     async (acceptedFiles: File[]) => {
@@ -148,14 +181,22 @@ export function Sidebar() {
         ) {
           // Show resolution matching dialog
           setPendingMedia(media);
+          pendingFileRef.current = file;
           setShowResolutionDialog(true);
         } else {
           addMedia(media);
           toast.success(`Added ${file.name}`);
+
+          // Generate waveform asynchronously after adding media
+          if (mediaType === 'audio') {
+            generateWaveformFromFile(file, media.id);
+          } else if (mediaType === 'video') {
+            extractAudioFromVideo(url, media.id);
+          }
         }
       }
     },
-    [addMedia, project]
+    [addMedia, project, generateWaveformFromFile, extractAudioFromVideo]
   );
 
   const handleMatchToMedia = () => {
@@ -187,8 +228,14 @@ export function Sidebar() {
 
       addMedia(pendingMedia);
       toast.success(`Project resolution updated to ${mediaWidth}x${mediaHeight}`);
+
+      // Generate waveform for video after adding
+      if (pendingMedia.type === 'video') {
+        extractAudioFromVideo(pendingMedia.path, pendingMedia.id);
+      }
     }
     setPendingMedia(null);
+    pendingFileRef.current = null;
     setShowResolutionDialog(false);
   };
 
@@ -196,8 +243,14 @@ export function Sidebar() {
     if (pendingMedia) {
       addMedia(pendingMedia);
       toast.success(`Added ${pendingMedia.name} (auto-scaled to project resolution)`);
+
+      // Generate waveform for video after adding
+      if (pendingMedia.type === 'video') {
+        extractAudioFromVideo(pendingMedia.path, pendingMedia.id);
+      }
     }
     setPendingMedia(null);
+    pendingFileRef.current = null;
     setShowResolutionDialog(false);
   };
 
@@ -206,6 +259,7 @@ export function Sidebar() {
       URL.revokeObjectURL(pendingMedia.path);
     }
     setPendingMedia(null);
+    pendingFileRef.current = null;
     setShowResolutionDialog(false);
   };
 
@@ -416,32 +470,58 @@ function EffectsPanel() {
   const [draggingEffect, setDraggingEffect] = useState<string | null>(null);
 
   const effects = [
-    { id: 'brightness', name: 'Brightness', icon: '☀️', value: 1.2 },
-    { id: 'contrast', name: 'Contrast', icon: '◐', value: 1.3 },
-    { id: 'saturation', name: 'Saturation', icon: '🎨', value: 1.5 },
-    { id: 'blur', name: 'Blur', icon: '💨', value: 2 },
-    { id: 'sharpen', name: 'Sharpen', icon: '🔍', value: 1.5 },
-    { id: 'grayscale', name: 'Grayscale', icon: '⚫', value: 1 },
-    { id: 'sepia', name: 'Sepia', icon: '🟤', value: 0.8 },
-    { id: 'invert', name: 'Invert', icon: '🔄', value: 1 },
-    { id: 'vignette', name: 'Vignette', icon: '🎯', value: 0.5 },
-    { id: 'chromatic', name: 'Chromatic', icon: '🌈', value: 3 },
-    { id: 'noise', name: 'Film Grain', icon: '📺', value: 0.1 },
-    { id: 'glow', name: 'Glow', icon: '✨', value: 10 },
-    { id: 'chroma-key', name: 'Chroma Key', icon: '🟩', value: 0.4 },
+    { id: 'brightness', name: 'Brightness', icon: '☀️', value: 1.2, category: 'color' },
+    { id: 'contrast', name: 'Contrast', icon: '◐', value: 1.3, category: 'color' },
+    { id: 'saturation', name: 'Saturation', icon: '🎨', value: 1.5, category: 'color' },
+    { id: 'blur', name: 'Blur', icon: '💨', value: 2, category: 'blur' },
+    { id: 'sharpen', name: 'Sharpen', icon: '🔍', value: 1.5, category: 'blur' },
+    { id: 'grayscale', name: 'Grayscale', icon: '⚫', value: 1, category: 'color' },
+    { id: 'sepia', name: 'Sepia', icon: '🟤', value: 0.8, category: 'color' },
+    { id: 'invert', name: 'Invert', icon: '🔄', value: 1, category: 'color' },
+    { id: 'vignette', name: 'Vignette', icon: '🎯', value: 0.5, category: 'stylize' },
+    { id: 'chromatic', name: 'Chromatic', icon: '🌈', value: 3, category: 'stylize' },
+    { id: 'noise', name: 'Film Grain', icon: '📺', value: 0.1, category: 'stylize' },
+    { id: 'glow', name: 'Glow', icon: '✨', value: 10, category: 'stylize' },
+    { id: 'chroma-key', name: 'Chroma Key', icon: '🟩', value: 0.4, category: 'keying' },
+    { id: 'noise-reduction', name: 'Denoise', icon: '🔇', value: 0.5, category: 'restoration' },
+    { id: 'stabilize', name: 'Stabilize', icon: '📐', value: 0.8, category: 'motion' },
+    { id: 'speed', name: 'Speed Ramp', icon: '⏩', value: 1.5, category: 'time' },
+    { id: 'reverse', name: 'Reverse', icon: '⏪', value: 1, category: 'time' },
+    { id: 'color-correction', name: 'Color Grade', icon: '🎬', value: 1, category: 'color' },
+    { id: 'crop', name: 'Crop & Pan', icon: '✂️', value: 1, category: 'transform' },
+    { id: 'scale', name: 'Scale', icon: '📏', value: 1.2, category: 'transform' },
+    { id: 'rotate', name: 'Rotate', icon: '🔁', value: 45, category: 'transform' },
+    { id: 'flip', name: 'Mirror', icon: '🪞', value: 1, category: 'transform' },
+  ];
+
+  const audioEffects = [
+    { id: 'fade-in', name: 'Fade In', icon: '📈', value: 1, duration: 1 },
+    { id: 'fade-out', name: 'Fade Out', icon: '📉', value: 1, duration: 1 },
+    { id: 'normalize', name: 'Normalize', icon: '📊', value: -14 },
+    { id: 'compression', name: 'Compress', icon: '🔊', value: 0.5 },
+    { id: 'reverb', name: 'Reverb', icon: '🏔️', value: 0.3 },
+    { id: 'echo', name: 'Echo', icon: '🔉', value: 0.4 },
+    { id: 'noise-gate', name: 'Noise Gate', icon: '🚪', value: 0.1 },
+    { id: 'eq-bass', name: 'Bass Boost', icon: '🔈', value: 1.5 },
+    { id: 'eq-treble', name: 'Treble Boost', icon: '🔔', value: 1.3 },
+    { id: 'auto-duck', name: 'Auto Duck', icon: '🦆', value: 0.3 },
   ];
 
   const transitions = [
     { id: 'fade', name: 'Fade', icon: '🌅', duration: 0.5 },
     { id: 'dissolve', name: 'Dissolve', icon: '💫', duration: 0.8 },
+    { id: 'crossfade', name: 'Crossfade', icon: '🔀', duration: 0.6 },
     { id: 'wipe-left', name: 'Wipe Left', icon: '👈', duration: 0.6 },
     { id: 'wipe-right', name: 'Wipe Right', icon: '👉', duration: 0.6 },
     { id: 'wipe-up', name: 'Wipe Up', icon: '👆', duration: 0.6 },
     { id: 'wipe-down', name: 'Wipe Down', icon: '👇', duration: 0.6 },
+    { id: 'wipe', name: 'Wipe Diagonal', icon: '↗️', duration: 0.6 },
     { id: 'slide-left', name: 'Slide Left', icon: '⬅️', duration: 0.5 },
     { id: 'slide-right', name: 'Slide Right', icon: '➡️', duration: 0.5 },
+    { id: 'slide', name: 'Slide Push', icon: '↔️', duration: 0.5 },
     { id: 'zoom-in', name: 'Zoom In', icon: '🔎', duration: 0.7 },
     { id: 'zoom-out', name: 'Zoom Out', icon: '🔍', duration: 0.7 },
+    { id: 'zoom', name: 'Zoom Through', icon: '🎯', duration: 0.8 },
     { id: 'spin', name: 'Spin', icon: '🔄', duration: 0.8 },
     { id: 'whip', name: 'Whip Pan', icon: '💨', duration: 0.3 },
     { id: 'glitch', name: 'Glitch', icon: '📺', duration: 0.4 },
@@ -579,6 +659,59 @@ function EffectsPanel() {
             >
               <span>{transition.icon}</span>
               <span className="font-medium">{transition.name}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <h3 className="text-sm font-semibold mb-2">Audio Effects</h3>
+        <p className="text-xs text-muted-foreground mb-3">
+          Apply to audio clips or video with audio
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          {audioEffects.map((effect) => (
+            <button
+              key={effect.id}
+              onClick={() => {
+                if (selectedClipIds.length === 0) {
+                  toast.error('Select a clip first');
+                  return;
+                }
+                // Apply audio effect to selected clips
+                for (const clipId of selectedClipIds) {
+                  for (const track of project?.tracks || []) {
+                    const clip = track.clips.find((c) => c.id === clipId);
+                    if (clip) {
+                      const params: Record<string, number | string | boolean> = {
+                        value: effect.value,
+                        enabled: true,
+                      };
+                      if ('duration' in effect && effect.duration !== undefined) {
+                        params.duration = effect.duration;
+                      }
+                      const newEffect: Effect = {
+                        id: uuidv4(),
+                        type: effect.id as EffectType,
+                        params,
+                      };
+                      updateClip(track.id, clipId, {
+                        effects: [...clip.effects.filter(e => e.type !== effect.id), newEffect],
+                      });
+                      break;
+                    }
+                  }
+                }
+                toast.success(`Applied ${effect.name} to ${selectedClipIds.length} clip${selectedClipIds.length > 1 ? 's' : ''}`);
+              }}
+              className={cn(
+                'flex items-center gap-2 rounded-md bg-green-500/20 p-2 text-xs transition-all',
+                'hover:bg-green-500/30 hover:scale-105',
+                selectedClipIds.length > 0 && 'hover:ring-2 hover:ring-green-500/50'
+              )}
+            >
+              <span>{effect.icon}</span>
+              <span className="font-medium">{effect.name}</span>
             </button>
           ))}
         </div>
