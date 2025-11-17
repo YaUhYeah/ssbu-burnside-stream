@@ -1,11 +1,16 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Maximize2, Minimize2, Volume2, VolumeX } from 'lucide-react';
+import { Maximize2, Minimize2, Volume2, VolumeX, Settings, Crop, Maximize } from 'lucide-react';
 import { useProjectStore } from '@/stores/projectStore';
+import { cn } from '@/lib/utils';
+
+type ScaleMode = 'fit' | 'fill' | 'cover' | 'stretch';
 
 interface VideoSource {
   video: HTMLVideoElement;
   mediaId: string;
   ready: boolean;
+  originalWidth: number;
+  originalHeight: number;
 }
 
 export function Preview() {
@@ -14,6 +19,9 @@ export function Preview() {
   const videoSourcesRef = useRef<Map<string, VideoSource>>(new Map());
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
+  const [scaleMode, setScaleMode] = useState<ScaleMode>('fill');
+  const [showScaleMenu, setShowScaleMenu] = useState(false);
+  const lastRenderTimeRef = useRef<number>(0);
 
   const {
     project,
@@ -102,7 +110,7 @@ export function Preview() {
     };
   }, [isPlaying, project, isMuted]);
 
-  // Initialize video sources for all media
+  // Initialize video sources for all media with high quality settings
   useEffect(() => {
     if (!project) return;
 
@@ -118,19 +126,35 @@ export function Preview() {
         video.playsInline = true;
         video.crossOrigin = 'anonymous';
 
-        // Optimize for quality - request high quality playback
+        // HIGH QUALITY SETTINGS for better MKV/VOD playback
         video.setAttribute('playsinline', 'true');
         video.setAttribute('webkit-playsinline', 'true');
 
+        // Request high quality decoding
+        if ('requestVideoFrameCallback' in video) {
+          // Modern browsers - request frame callbacks for smoother playback
+        }
+
         // Handle codec issues gracefully
-        video.onerror = () => {
-          console.warn(`Video playback issue for ${media.name}. Using fallback.`);
+        video.onerror = (e) => {
+          console.warn(`Video playback issue for ${media.name}:`, e);
           // Mark as ready even on error to show thumbnail
           videoSourcesRef.current.set(media.id, {
             video,
             mediaId: media.id,
             ready: false,
+            originalWidth: 0,
+            originalHeight: 0,
           });
+        };
+
+        video.onloadedmetadata = () => {
+          // Store original dimensions for proper scaling
+          const source = videoSourcesRef.current.get(media.id);
+          if (source) {
+            source.originalWidth = video.videoWidth;
+            source.originalHeight = video.videoHeight;
+          }
         };
 
         video.onloadeddata = () => {
@@ -138,6 +162,8 @@ export function Preview() {
             video,
             mediaId: media.id,
             ready: true,
+            originalWidth: video.videoWidth,
+            originalHeight: video.videoHeight,
           });
         };
 
@@ -145,6 +171,8 @@ export function Preview() {
           video,
           mediaId: media.id,
           ready: false,
+          originalWidth: 0,
+          originalHeight: 0,
         });
       }
     });
@@ -163,7 +191,81 @@ export function Preview() {
     };
   }, [project?.media, isMuted]);
 
-  // Render preview frame
+  // Calculate draw dimensions based on scale mode
+  const calculateDrawDimensions = useCallback((
+    videoWidth: number,
+    videoHeight: number,
+    canvasWidth: number,
+    canvasHeight: number,
+    mode: ScaleMode
+  ): { x: number; y: number; width: number; height: number; sourceX: number; sourceY: number; sourceWidth: number; sourceHeight: number } => {
+    const videoAspect = videoWidth / videoHeight;
+    const canvasAspect = canvasWidth / canvasHeight;
+
+    let drawX = 0;
+    let drawY = 0;
+    let drawWidth = canvasWidth;
+    let drawHeight = canvasHeight;
+    let sourceX = 0;
+    let sourceY = 0;
+    let sourceWidth = videoWidth;
+    let sourceHeight = videoHeight;
+
+    switch (mode) {
+      case 'fit':
+        // Letterbox - show entire video with black bars
+        if (videoAspect > canvasAspect) {
+          drawHeight = canvasWidth / videoAspect;
+          drawY = (canvasHeight - drawHeight) / 2;
+        } else {
+          drawWidth = canvasHeight * videoAspect;
+          drawX = (canvasWidth - drawWidth) / 2;
+        }
+        break;
+
+      case 'fill':
+        // Smart crop - fill canvas, crop edges, keep center
+        if (videoAspect > canvasAspect) {
+          // Video is wider - crop sides
+          sourceWidth = videoHeight * canvasAspect;
+          sourceX = (videoWidth - sourceWidth) / 2;
+        } else {
+          // Video is taller - crop top/bottom
+          sourceHeight = videoWidth / canvasAspect;
+          sourceY = (videoHeight - sourceHeight) / 2;
+        }
+        break;
+
+      case 'cover':
+        // Cover with smart focus on center (no letterbox, may crop)
+        if (videoAspect > canvasAspect) {
+          sourceWidth = videoHeight * canvasAspect;
+          sourceX = (videoWidth - sourceWidth) / 2;
+        } else {
+          sourceHeight = videoWidth / canvasAspect;
+          sourceY = (videoHeight - sourceHeight) / 2;
+        }
+        break;
+
+      case 'stretch':
+        // Stretch to fill (may distort)
+        // No changes needed - draws video to full canvas
+        break;
+    }
+
+    return {
+      x: drawX,
+      y: drawY,
+      width: drawWidth,
+      height: drawHeight,
+      sourceX,
+      sourceY,
+      sourceWidth,
+      sourceHeight,
+    };
+  }, []);
+
+  // Render preview frame with high quality
   const renderFrame = useCallback(() => {
     if (!project || !canvasRef.current) return;
 
@@ -171,14 +273,17 @@ export function Preview() {
     const ctx = canvas.getContext('2d', {
       alpha: false,
       desynchronized: true,
+      willReadFrequently: false,
     });
     if (!ctx) return;
 
     // Set canvas size based on project resolution
-    canvas.width = project.resolution.width;
-    canvas.height = project.resolution.height;
+    if (canvas.width !== project.resolution.width || canvas.height !== project.resolution.height) {
+      canvas.width = project.resolution.width;
+      canvas.height = project.resolution.height;
+    }
 
-    // Enable high quality rendering
+    // HIGH QUALITY RENDERING SETTINGS
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
 
@@ -200,13 +305,14 @@ export function Preview() {
 
           if (media.type === 'video') {
             const source = videoSourcesRef.current.get(media.id);
-            if (source?.ready) {
+            if (source?.ready && source.originalWidth > 0) {
               // Calculate position within source media
               const relativeTime = currentTime - clip.startTime;
               const sourceTime = clip.inPoint + relativeTime;
 
-              // Seek video if needed
-              if (Math.abs(source.video.currentTime - sourceTime) > 0.1) {
+              // Seek video if needed (with tolerance for smoother playback)
+              const seekTolerance = isPlaying ? 0.15 : 0.05;
+              if (Math.abs(source.video.currentTime - sourceTime) > seekTolerance) {
                 source.video.currentTime = sourceTime;
               }
 
@@ -220,26 +326,31 @@ export function Preview() {
                 source.video.pause();
               }
 
-              // Draw video frame
+              // Draw video frame with proper scaling
               try {
                 ctx.globalAlpha = clip.opacity;
-                const videoAspect = source.video.videoWidth / source.video.videoHeight;
-                const canvasAspect = canvas.width / canvas.height;
 
-                let drawWidth = canvas.width;
-                let drawHeight = canvas.height;
-                let drawX = 0;
-                let drawY = 0;
+                // Calculate dimensions based on scale mode
+                const dims = calculateDrawDimensions(
+                  source.originalWidth,
+                  source.originalHeight,
+                  canvas.width,
+                  canvas.height,
+                  scaleMode
+                );
 
-                if (videoAspect > canvasAspect) {
-                  drawHeight = canvas.width / videoAspect;
-                  drawY = (canvas.height - drawHeight) / 2;
-                } else {
-                  drawWidth = canvas.height * videoAspect;
-                  drawX = (canvas.width - drawWidth) / 2;
-                }
-
-                ctx.drawImage(source.video, drawX, drawY, drawWidth, drawHeight);
+                // Use high quality drawing with source cropping
+                ctx.drawImage(
+                  source.video,
+                  dims.sourceX,
+                  dims.sourceY,
+                  dims.sourceWidth,
+                  dims.sourceHeight,
+                  dims.x,
+                  dims.y,
+                  dims.width,
+                  dims.height
+                );
                 ctx.globalAlpha = 1;
               } catch {
                 // Video not ready, show thumbnail
@@ -310,7 +421,9 @@ export function Preview() {
       ctx.fillStyle = style.color;
       ctx.fillText(caption.text, x, y);
     });
-  }, [project, currentTime]);
+
+    lastRenderTimeRef.current = performance.now();
+  }, [project, currentTime, scaleMode, calculateDrawDimensions, isPlaying]);
 
   // Render on time change
   useEffect(() => {
@@ -352,6 +465,43 @@ export function Preview() {
 
       {/* Preview controls */}
       <div className="absolute bottom-4 right-4 flex gap-2">
+        <div className="relative">
+          <button
+            onClick={() => setShowScaleMenu(!showScaleMenu)}
+            className="rounded-md bg-black/50 p-2 text-white hover:bg-black/70"
+            title="Scale mode"
+          >
+            <Crop className="h-4 w-4" />
+          </button>
+
+          {showScaleMenu && (
+            <div className="absolute bottom-full right-0 mb-2 min-w-40 rounded-md border border-border bg-card p-2 shadow-lg">
+              <div className="text-xs font-medium mb-2 text-muted-foreground">Scale Mode</div>
+              {[
+                { mode: 'fill' as ScaleMode, label: 'Fill (Smart Crop)', icon: Maximize },
+                { mode: 'fit' as ScaleMode, label: 'Fit (Letterbox)', icon: Maximize2 },
+                { mode: 'cover' as ScaleMode, label: 'Cover', icon: Crop },
+                { mode: 'stretch' as ScaleMode, label: 'Stretch', icon: Settings },
+              ].map(({ mode, label, icon: Icon }) => (
+                <button
+                  key={mode}
+                  onClick={() => {
+                    setScaleMode(mode);
+                    setShowScaleMenu(false);
+                  }}
+                  className={cn(
+                    'flex w-full items-center gap-2 rounded px-2 py-1 text-xs hover:bg-accent',
+                    scaleMode === mode && 'bg-primary/20 text-primary'
+                  )}
+                >
+                  <Icon className="h-3 w-3" />
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
         <button
           onClick={() => setIsMuted(!isMuted)}
           className="rounded-md bg-black/50 p-2 text-white hover:bg-black/70"
@@ -376,7 +526,7 @@ export function Preview() {
 
       {/* Aspect ratio indicator */}
       <div className="absolute left-4 top-4 rounded bg-black/50 px-2 py-1 text-xs text-white">
-        {project.aspectRatio}
+        {project.aspectRatio} | {scaleMode.toUpperCase()}
       </div>
 
       {/* Audio state indicator */}

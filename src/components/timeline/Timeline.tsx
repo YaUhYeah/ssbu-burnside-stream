@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, useMemo } from 'react';
-import { Plus, Minus, Lock, Eye, EyeOff, Volume2, VolumeX, Trash2, X, Magnet, Maximize, RotateCcw, Unlink } from 'lucide-react';
+import { Plus, Minus, Lock, Eye, EyeOff, Volume2, VolumeX, Trash2, X, Magnet, Maximize, RotateCcw, Unlink, Scissors, Copy, SkipBack, SkipForward, ArrowLeftRight } from 'lucide-react';
 import { useProjectStore } from '@/stores/projectStore';
 import { cn, formatTime, timeToPixels, pixelsToTime } from '@/lib/utils';
 import toast from 'react-hot-toast';
@@ -7,6 +7,8 @@ import toast from 'react-hot-toast';
 interface TimelineProps {
   simplified?: boolean;
 }
+
+type TimelineTool = 'select' | 'razor' | 'slip' | 'ripple';
 
 export function Timeline({ simplified = false }: TimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -21,6 +23,9 @@ export function Timeline({ simplified = false }: TimelineProps) {
   const [, setResizeEdge] = useState<'left' | 'right' | null>(null);
   const [, setPendingDrag] = useState(false);
   const [, setDragThresholdMet] = useState(false);
+  const [activeTool, setActiveTool] = useState<TimelineTool>('select');
+  const [hoveredClip, setHoveredClip] = useState<{ id: string; info: string } | null>(null);
+  const [rippleMode, setRippleMode] = useState(false);
 
   // Marquee selection state
   const [marqueeSelection, setMarqueeSelection] = useState<{
@@ -69,6 +74,7 @@ export function Timeline({ simplified = false }: TimelineProps) {
     removeTrack,
     updateProject,
     separateVideoAudio,
+    addClip,
   } = useProjectStore();
 
   const pixelsPerSecond = 50;
@@ -409,29 +415,157 @@ export function Timeline({ simplified = false }: TimelineProps) {
     setDragStartTime(clipTime);
   };
 
-  // Handle keyboard shortcuts for clip deletion
+  // Handle keyboard shortcuts for timeline operations
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if typing in an input
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      // Delete/Backspace - Remove clips (with ripple if enabled)
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedClipIds.length > 0 && project) {
         e.preventDefault();
-        // Find and remove selected clips
-        for (const clipId of selectedClipIds) {
+        // Inline ripple delete
+        const deletionInfo: { trackId: string; clipId: string; startTime: number; duration: number }[] = [];
+        selectedClipIds.forEach((clipId) => {
           for (const track of project.tracks) {
             const clip = track.clips.find((c) => c.id === clipId);
             if (clip) {
-              removeClip(track.id, clipId);
+              deletionInfo.push({ trackId: track.id, clipId: clip.id, startTime: clip.startTime, duration: clip.duration });
               break;
             }
           }
+        });
+        deletionInfo.forEach(({ trackId, clipId }) => removeClip(trackId, clipId));
+        if (rippleMode) {
+          deletionInfo.forEach(({ trackId, startTime, duration }) => {
+            const track = project.tracks.find((t) => t.id === trackId);
+            if (track) {
+              track.clips.forEach((clip) => {
+                if (clip.startTime > startTime) {
+                  updateClip(trackId, clip.id, { startTime: clip.startTime - duration });
+                }
+              });
+            }
+          });
         }
         deselectAllClips();
-        toast.success(`Removed ${selectedClipIds.length} clip${selectedClipIds.length > 1 ? 's' : ''}`);
+        toast.success(`Removed ${deletionInfo.length} clip${deletionInfo.length > 1 ? 's' : ''}${rippleMode ? ' (ripple)' : ''}`);
+        return;
+      }
+
+      // S - Split clip at playhead
+      if (e.key === 's' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        // Inline split at playhead
+        for (const track of project?.tracks || []) {
+          for (const clip of track.clips) {
+            if (currentTime > clip.startTime && currentTime < clip.startTime + clip.duration) {
+              const splitTime = currentTime - clip.startTime;
+              if (splitTime > 0.1 && splitTime < clip.duration - 0.1) {
+                updateClip(track.id, clip.id, { duration: splitTime, outPoint: clip.inPoint + splitTime });
+                addClip(track.id, {
+                  mediaId: clip.mediaId,
+                  trackId: track.id,
+                  startTime: clip.startTime + splitTime,
+                  duration: clip.duration - splitTime,
+                  inPoint: clip.inPoint + splitTime,
+                  outPoint: clip.outPoint,
+                  opacity: clip.opacity,
+                  volume: clip.volume,
+                  effects: [...clip.effects],
+                  transitions: [],
+                  locked: false,
+                });
+                toast.success('Clip split at playhead');
+              }
+              return;
+            }
+          }
+        }
+        toast.error('No clip at playhead position');
+        return;
+      }
+
+      // D - Duplicate selected clips
+      if (e.key === 'd' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        if (selectedClipIds.length === 0) {
+          toast.error('No clips selected');
+          return;
+        }
+        let count = 0;
+        selectedClipIds.forEach((clipId) => {
+          for (const track of project?.tracks || []) {
+            const clip = track.clips.find((c) => c.id === clipId);
+            if (clip) {
+              addClip(track.id, {
+                mediaId: clip.mediaId,
+                trackId: track.id,
+                startTime: clip.startTime + clip.duration,
+                duration: clip.duration,
+                inPoint: clip.inPoint,
+                outPoint: clip.outPoint,
+                opacity: clip.opacity,
+                volume: clip.volume,
+                effects: [...clip.effects],
+                transitions: [],
+                locked: false,
+              });
+              count++;
+              break;
+            }
+          }
+        });
+        if (count > 0) toast.success(`Duplicated ${count} clip${count > 1 ? 's' : ''}`);
+        return;
+      }
+
+      // Arrow keys - Navigate clip edges
+      if (e.key === 'ArrowLeft' && e.altKey) {
+        e.preventDefault();
+        const edges = [0];
+        project?.tracks.forEach((t) => t.clips.forEach((c) => { edges.push(c.startTime); edges.push(c.startTime + c.duration); }));
+        const uniqueEdges = [...new Set(edges)].sort((a, b) => a - b);
+        const prevEdges = uniqueEdges.filter((e) => e < currentTime - 0.01);
+        if (prevEdges.length > 0) setCurrentTime(prevEdges[prevEdges.length - 1]);
+        return;
+      }
+
+      if (e.key === 'ArrowRight' && e.altKey) {
+        e.preventDefault();
+        const edges = [0];
+        project?.tracks.forEach((t) => t.clips.forEach((c) => { edges.push(c.startTime); edges.push(c.startTime + c.duration); }));
+        const uniqueEdges = [...new Set(edges)].sort((a, b) => a - b);
+        const nextEdge = uniqueEdges.find((e) => e > currentTime + 0.01);
+        if (nextEdge !== undefined) setCurrentTime(nextEdge);
+        return;
+      }
+
+      // Tool shortcuts
+      if (e.key === 'v' || e.key === '1') {
+        setActiveTool('select');
+        toast.success('Selection tool');
+      } else if (e.key === 'c' || e.key === '2') {
+        setActiveTool('razor');
+        toast.success('Razor tool');
+      } else if (e.key === 'y' || e.key === '3') {
+        setActiveTool('slip');
+        toast.success('Slip tool');
+      } else if (e.key === 'r') {
+        setRippleMode(!rippleMode);
+        toast.success(`Ripple mode ${!rippleMode ? 'enabled' : 'disabled'}`);
+      }
+
+      // Escape - Deselect all
+      if (e.key === 'Escape') {
+        deselectAllClips();
+        setActiveTool('select');
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedClipIds, project, removeClip, deselectAllClips]);
+  }, [selectedClipIds, project, deselectAllClips, rippleMode, currentTime, removeClip, updateClip, addClip, setCurrentTime]);
 
   // Close context menu when clicking elsewhere
   useEffect(() => {
@@ -477,6 +611,130 @@ export function Timeline({ simplified = false }: TimelineProps) {
     toast.success('Audio separated from video');
   };
 
+  // Split clip at playhead position
+  const handleSplitClip = (trackId?: string, clipId?: string) => {
+    if (!project) return;
+
+    // Find clip at playhead if not specified
+    if (!trackId || !clipId) {
+      for (const track of project.tracks) {
+        for (const clip of track.clips) {
+          if (currentTime > clip.startTime && currentTime < clip.startTime + clip.duration) {
+            handleSplitClip(track.id, clip.id);
+            return;
+          }
+        }
+      }
+      toast.error('No clip at playhead position');
+      return;
+    }
+
+    const track = project.tracks.find((t) => t.id === trackId);
+    const clip = track?.clips.find((c) => c.id === clipId);
+    if (!track || !clip) return;
+
+    // Calculate split point relative to clip
+    const splitTime = currentTime - clip.startTime;
+    if (splitTime <= 0.1 || splitTime >= clip.duration - 0.1) {
+      toast.error('Cannot split at clip edges');
+      return;
+    }
+
+    // Create two clips from the original
+    const firstClipDuration = splitTime;
+    const secondClipDuration = clip.duration - splitTime;
+
+    // Update original clip to be first half
+    updateClip(trackId, clipId, {
+      duration: firstClipDuration,
+      outPoint: clip.inPoint + firstClipDuration,
+    });
+
+    // Create second half as new clip
+    addClip(trackId, {
+      mediaId: clip.mediaId,
+      trackId: trackId,
+      startTime: clip.startTime + firstClipDuration,
+      duration: secondClipDuration,
+      inPoint: clip.inPoint + firstClipDuration,
+      outPoint: clip.outPoint,
+      opacity: clip.opacity,
+      volume: clip.volume,
+      effects: [...clip.effects],
+      transitions: [],
+      locked: false,
+    });
+
+    toast.success('Clip split at playhead');
+  };
+
+  // Skip to next/previous clip edge
+  const handleSkipToClipEdge = (direction: 'next' | 'prev') => {
+    if (!project) return;
+
+    const edges: number[] = [0];
+    project.tracks.forEach((track) => {
+      track.clips.forEach((clip) => {
+        edges.push(clip.startTime);
+        edges.push(clip.startTime + clip.duration);
+      });
+    });
+    edges.push(project.duration);
+
+    const uniqueEdges = [...new Set(edges)].sort((a, b) => a - b);
+
+    if (direction === 'next') {
+      const nextEdge = uniqueEdges.find((e) => e > currentTime + 0.01);
+      if (nextEdge !== undefined) {
+        setCurrentTime(nextEdge);
+        toast.success(`Jumped to ${formatTime(nextEdge)}`);
+      }
+    } else {
+      const prevEdges = uniqueEdges.filter((e) => e < currentTime - 0.01);
+      if (prevEdges.length > 0) {
+        const prevEdge = prevEdges[prevEdges.length - 1];
+        setCurrentTime(prevEdge);
+        toast.success(`Jumped to ${formatTime(prevEdge)}`);
+      }
+    }
+  };
+
+  // Duplicate selected clips
+  const handleDuplicateClips = () => {
+    if (!project || selectedClipIds.length === 0) {
+      toast.error('No clips selected');
+      return;
+    }
+
+    let duplicateCount = 0;
+    selectedClipIds.forEach((clipId) => {
+      for (const track of project.tracks) {
+        const clip = track.clips.find((c) => c.id === clipId);
+        if (clip) {
+          addClip(track.id, {
+            mediaId: clip.mediaId,
+            trackId: track.id,
+            startTime: clip.startTime + clip.duration,
+            duration: clip.duration,
+            inPoint: clip.inPoint,
+            outPoint: clip.outPoint,
+            opacity: clip.opacity,
+            volume: clip.volume,
+            effects: [...clip.effects],
+            transitions: [],
+            locked: false,
+          });
+          duplicateCount++;
+          break;
+        }
+      }
+    });
+
+    if (duplicateCount > 0) {
+      toast.success(`Duplicated ${duplicateCount} clip${duplicateCount > 1 ? 's' : ''}`);
+    }
+  };
+
   if (!project) return null;
 
   const timelineWidth = Math.max(
@@ -515,19 +773,92 @@ export function Timeline({ simplified = false }: TimelineProps) {
         <div className="flex items-center gap-2">
           {!simplified && (
             <>
+              {/* Tool selection */}
+              <div className="flex items-center gap-1 rounded bg-muted p-1">
+                <button
+                  onClick={() => setActiveTool('select')}
+                  className={cn(
+                    'rounded p-1.5 text-xs',
+                    activeTool === 'select' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'
+                  )}
+                  title="Selection tool (V)"
+                >
+                  <ArrowLeftRight className="h-3 w-3" />
+                </button>
+                <button
+                  onClick={() => setActiveTool('razor')}
+                  className={cn(
+                    'rounded p-1.5 text-xs',
+                    activeTool === 'razor' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'
+                  )}
+                  title="Razor tool (C)"
+                >
+                  <Scissors className="h-3 w-3" />
+                </button>
+                <button
+                  onClick={() => setRippleMode(!rippleMode)}
+                  className={cn(
+                    'rounded p-1.5 text-xs',
+                    rippleMode ? 'bg-orange-500 text-white' : 'hover:bg-accent'
+                  )}
+                  title="Ripple mode (R) - shift clips after delete"
+                >
+                  <ArrowLeftRight className="h-3 w-3 rotate-45" />
+                </button>
+              </div>
+
+              <div className="mx-1 h-6 w-px bg-border" />
+
+              {/* Quick actions */}
+              <button
+                onClick={() => handleSplitClip()}
+                className="flex items-center gap-1 rounded px-2 py-1 text-xs hover:bg-accent"
+                title="Split clip at playhead (S)"
+              >
+                <Scissors className="h-3 w-3" />
+                Split
+              </button>
+              <button
+                onClick={handleDuplicateClips}
+                className="flex items-center gap-1 rounded px-2 py-1 text-xs hover:bg-accent"
+                title="Duplicate selected clips (D)"
+                disabled={selectedClipIds.length === 0}
+              >
+                <Copy className="h-3 w-3" />
+                Duplicate
+              </button>
+              <button
+                onClick={() => handleSkipToClipEdge('prev')}
+                className="rounded p-1 text-xs hover:bg-accent"
+                title="Previous clip edge (Alt+←)"
+              >
+                <SkipBack className="h-3 w-3" />
+              </button>
+              <button
+                onClick={() => handleSkipToClipEdge('next')}
+                className="rounded p-1 text-xs hover:bg-accent"
+                title="Next clip edge (Alt+→)"
+              >
+                <SkipForward className="h-3 w-3" />
+              </button>
+
+              <div className="mx-1 h-6 w-px bg-border" />
+
               <button
                 onClick={() => addTrack('video')}
                 className="rounded px-2 py-1 text-xs hover:bg-accent"
               >
-                + Video Track
+                + Video
               </button>
               <button
                 onClick={() => addTrack('audio')}
                 className="rounded px-2 py-1 text-xs hover:bg-accent"
               >
-                + Audio Track
+                + Audio
               </button>
-              <div className="mx-2 h-6 w-px bg-border" />
+
+              <div className="mx-1 h-6 w-px bg-border" />
+
               <button
                 onClick={() =>
                   updateProject({
@@ -726,19 +1057,30 @@ export function Timeline({ simplified = false }: TimelineProps) {
                           'ring-2 ring-yellow-400',
                         track.type === 'audio' && 'bg-green-500/80',
                         track.type === 'caption' && 'bg-yellow-500/80',
-                        (isDragging || isResizing) && dragClipId === clip.id && 'dragging'
+                        (isDragging || isResizing) && dragClipId === clip.id && 'dragging',
+                        activeTool === 'razor' && 'cursor-crosshair'
                       )}
                       style={{ left, width: Math.max(width, 20) }}
-                      onMouseDown={(e) =>
-                        handleClipMouseDown(
-                          e,
-                          track.id,
-                          clip.id,
-                          clip.startTime
-                        )
-                      }
+                      onMouseDown={(e) => {
+                        if (activeTool === 'razor') {
+                          e.stopPropagation();
+                          handleSplitClip(track.id, clip.id);
+                        } else {
+                          handleClipMouseDown(
+                            e,
+                            track.id,
+                            clip.id,
+                            clip.startTime
+                          );
+                        }
+                      }}
                       onClick={(e) => e.stopPropagation()}
                       onContextMenu={(e) => handleClipContextMenu(e, track.id, clip.id)}
+                      onMouseEnter={() => {
+                        const info = `${media?.name || 'Unknown'}\nStart: ${formatTime(clip.startTime)}\nDuration: ${formatTime(clip.duration)}\nIn: ${formatTime(clip.inPoint)} | Out: ${formatTime(clip.outPoint)}`;
+                        setHoveredClip({ id: clip.id, info });
+                      }}
+                      onMouseLeave={() => setHoveredClip(null)}
                     >
                       {/* Waveform visualization */}
                       {media?.waveform && media.waveform.length > 0 && (
@@ -771,10 +1113,24 @@ export function Timeline({ simplified = false }: TimelineProps) {
                         <span className="truncate text-[10px] font-medium text-white drop-shadow-sm">
                           {media?.name || 'Unknown'}
                         </span>
-                        <span className="text-[9px] text-white/70 drop-shadow-sm">
-                          {formatTime(clip.duration)}
-                        </span>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[9px] text-white/70 drop-shadow-sm">
+                            {formatTime(clip.duration)}
+                          </span>
+                          {clip.opacity < 1 && (
+                            <span className="text-[8px] text-white/60 bg-black/30 px-1 rounded">
+                              {Math.round(clip.opacity * 100)}%
+                            </span>
+                          )}
+                        </div>
                       </div>
+
+                      {/* Clip hover tooltip */}
+                      {hoveredClip?.id === clip.id && (
+                        <div className="absolute -top-20 left-1/2 -translate-x-1/2 bg-black/90 text-white text-[10px] p-2 rounded shadow-lg z-50 whitespace-pre pointer-events-none min-w-32">
+                          {hoveredClip.info}
+                        </div>
+                      )}
 
                       {/* Resize handles */}
                       <div
